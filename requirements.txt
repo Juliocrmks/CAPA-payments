@@ -1,0 +1,9 @@
+uvicorn[standard]
+fastapi
+python-multipart
+opencv-python-headless
+rapidocr-onnxruntime
+openpyxl
+rapidfuzz
+pillow
+numpy
