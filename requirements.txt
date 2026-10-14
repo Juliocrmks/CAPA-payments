@@ -2,7 +2,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 opencv-python-headless>=4.8
-rapidocr-onnxruntime>=1.3
+rapidocr-onnxruntime==1.2.3      # parsers are tuned to this version's text spacing; 1.4.x merges words
 pypdfium2>=4.20
 openpyxl>=3.1
 rapidfuzz>=3.5
