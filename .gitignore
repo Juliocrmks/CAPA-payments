@@ -13,3 +13,8 @@ node_modules/
 *.log
 # real customer documents: account numbers, card photos, IDs
 references/
+# terraform state / secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars

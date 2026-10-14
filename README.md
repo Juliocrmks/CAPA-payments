@@ -19,6 +19,8 @@ accounts-receivable users open from their own computers. Use `--local-only` to k
 
 Out of the box CheckFlow writes to a practice workbook in `data/`. Point it at the real one in **Settings → Workbook**.
 
+A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](deploy/terraform/README.md).
+
 ## What it does
 
 1. **Payments** (admin): drop a day's scanned PDF (or photos). Each page is classified and read:
@@ -44,10 +46,24 @@ Out of the box CheckFlow writes to a practice workbook in `data/`. Point it at t
    month / quarter / company / sheet / method / deposit bank / taxable, sortable columns, subtotals, taxable totals
    per deposit bank, CSV export, page images. **AR users can only change Taxable**; admins also change Deposit bank.
    Edits are written to the workbook (retried every 30 s while it's open in Excel).
-4. **Learned data** (admin): customers (import names from the workbook so scans snap to them), bank account →
+
+   **Import Excel** (admin): add past payments from any spreadsheet. The payee workbook itself (day blocks, any
+   year) or a plain table with Date, Customer and Amount columns (Method, Check #, Ticket, Payee, Deposit bank and
+   Taxable are used when present; .csv works too). A preview shows rows per payee, what's already in the ledger
+   (same payee, day, client and amount: skipped), withdrawals left out, and dates that don't fit the rows around
+   them (a 2026 typed among 2025 rows is corrected by default). Each import is one batch with **Undo**. Imported
+   rows never change the live workbook.
+4. **Analytics** (admin): one filter row (dates, day/week/month/quarter/year, payee, client, method) scopes
+   everything: KPIs with change vs the previous period, receipts over time with a **projection** (straight-line
+   trend, monthly seasonality once there are 24 months, 80% range; the current period by run-rate), a breakdown
+   by payee, client, method or deposit bank (share, change, trend, next-period estimate, how often a client usually
+   pays), and **storylines**: plain-language findings such as the leader and biggest movers, client concentration,
+   new clients, regular clients who have gone quiet, the shift to electronic payments and the projection.
+   Click a client or a storyline to focus on it. Every chart has a table view.
+5. **Learned data** (admin): customers (import names from the workbook so scans snap to them), bank account →
    customer, division → sheet, banks, wire-posting text → customer. Everything confirmed is learned; everything is
    editable. **Import from workbook** can also bring past rows into the ledger once (optional migration).
-5. **Settings** (admin): workbook, deposit banks and per-method defaults, sign-in, users, activity log.
+6. **Settings** (admin): workbook, deposit banks and per-method defaults, sign-in, users, activity log.
 
 ## Sign-in
 
@@ -65,14 +81,16 @@ run.py                     start the server (+ open the browser)
 checkflow/
   app.py                   FastAPI routes, background extraction worker, Excel sync loop
   auth.py, ldap_auth.py    sessions, local accounts, AD/LDAP
-  db.py                    SQLite: payments, pages, ledger, learned data, users, audit log
+  db.py                    SQLite: payments, pages, ledger, learned data, users, audit log, import batches
+  analytics.py             KPIs, periods, breakdowns, projection and storylines for the Analytics page
   registry.py              learned-data lookups used by the extractor
   extract/                 ocr.py (RapidOCR, PDF pages, orientation) · check.py (MICR) · docs.py (confirmations,
                            receipts, bank postings, page classification) · __init__.py (pipeline + grouping)
-  excel/                   layout.py (reads a sheet's layout) · writer.py · importer.py · practice.py
+  excel/                   layout.py (reads a sheet's layout) · writer.py · importer.py · practice.py ·
+                           ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (63 tests)
+tests/                     pytest suite (74 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 
@@ -85,7 +103,7 @@ tools/benchmark.py         extraction accuracy against the real packets' printed
 
 `references/` (real scans, phone photos, the real workbook) is git-ignored: it holds account numbers, card photos and an
 ID. Accuracy on the 3 packets of Oct 9 2026 plus 2 phone photos (23 payments): found 22/23 · method 96% · check/ref #
-96% · amount 87% · customer 74% · ticket 74%. Misses are handwritten amounts and receipt numbers, which the review
+96% · amount 87% · customer 74% · ticket 78%. Misses are handwritten amounts and receipt numbers, which the review
 screen highlights. A page with no readable payment still becomes a card ("fill it in from the image"); nothing is
 dropped silently. OCR is pinned to rapidocr-onnxruntime 1.2.3: the benchmark is the tool for judging an upgrade.
 

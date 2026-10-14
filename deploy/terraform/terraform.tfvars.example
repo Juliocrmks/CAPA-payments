@@ -1,0 +1,5 @@
+# Optional: cp terraform.tfvars.example terraform.tfvars, then edit. Everything has a default.
+region = "us-east-2"
+# allowed_cidrs = ["0.0.0.0/0"]         # who can open the web UI (default: anyone)
+# key_name      = "my-keypair"          # only if you also want SSH...
+# ssh_cidrs     = ["203.0.113.10/32"]   # ...from these addresses

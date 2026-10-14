@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 import { AppBar, Toolbar, Box, Tabs, Tab, Button, Menu, MenuItem, Typography, Alert, Dialog, DialogTitle, DialogContent,
   DialogActions, TextField, Stack, CircularProgress, ListItemIcon } from "@mui/material";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
@@ -10,8 +10,9 @@ import Inbox from "./pages/Inbox";
 import Ledger from "./pages/Ledger";
 import Learned from "./pages/Learned";
 import Settings from "./pages/Settings";
+const Analytics = lazy(() => import("./pages/Analytics"));     // charts load only when this tab opens
 
-const ADMIN_TABS = [["inbox", "Payments"], ["ledger", "Ledger"], ["learned", "Learned data"], ["settings", "Settings"]];
+const ADMIN_TABS = [["inbox", "Payments"], ["ledger", "Ledger"], ["analytics", "Analytics"], ["learned", "Learned data"], ["settings", "Settings"]];
 const AR_TABS = [["ledger", "Ledger"]];
 
 function useHashRoute(def) {
@@ -64,9 +65,10 @@ export default function App() {
           You're signed in with the default admin password. Change it before other people use CheckFlow on the network.
         </Alert>
       )}
-      <Box component="main" sx={{ flex: 1, width: "100%", maxWidth: current === "ledger" || current === "inbox" ? 1680 : 1320, mx: "auto", px: { xs: 1.5, md: 3 }, py: 3 }}>
+      <Box component="main" sx={{ flex: 1, width: "100%", maxWidth: ["ledger", "inbox", "analytics"].includes(current) ? 1680 : 1320, mx: "auto", px: { xs: 1.5, md: 3 }, py: 3 }}>
         {current === "inbox" && <Inbox />}
         {current === "ledger" && <Ledger me={me} />}
+        {current === "analytics" && <Suspense fallback={<CircularProgress />}><Analytics /></Suspense>}
         {current === "learned" && <Learned />}
         {current === "settings" && <Settings me={me} />}
       </Box>

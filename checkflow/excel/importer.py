@@ -50,23 +50,27 @@ def customers(path, sheets=None):
 
 def history(path, sheets=None):
     wb = openpyxl.load_workbook(path, data_only=True)
-    method_of = {"cash": "cash", "check": "check", "credit": "card"}
     try:
         for ws in wb.worksheets:
             if sheets and ws.title not in sheets: continue
-            for r, cols, g, d, amount_cols in _iter_entries(ws):
-                def val(k):
-                    c = cols.get(k)
-                    v = ws.cell(r, c).value if c else None
-                    if isinstance(v, datetime.datetime): return v.strftime("%-d-%b") if k == "payref" else v.date().isoformat()
-                    if isinstance(v, float) and v.is_integer(): v = int(v)
-                    return "" if v is None else str(v).strip()
-                ticket = val("ticket")
-                method = method_of[g]
-                if g == "credit" and ticket.upper() == "WIRE": method, ticket = "wire", ""
-                tax = val("taxable").upper()
-                yield dict(sheet=ws.title, row=r, received=d or "", customer=val("customer").upper(), order=val("order"),
-                           ticket=ticket, payref=val("payref"), method=method, amount=f"{float(ws.cell(r, amount_cols[g]).value):.2f}",
-                           taxable={"YES": "Yes", "NO": "No"}.get(tax, ""), deposit_bank=val("bank").upper())
+            yield from history_ws(ws)
     finally:
         wb.close()
+
+def history_ws(ws):
+    """Entry rows of one day-block sheet (header row per day, CASH / CHECK / CREDIT amount columns)."""
+    method_of = {"cash": "cash", "check": "check", "credit": "card"}
+    for r, cols, g, d, amount_cols in _iter_entries(ws):
+        def val(k):
+            c = cols.get(k)
+            v = ws.cell(r, c).value if c else None
+            if isinstance(v, datetime.datetime): return f"{v.day}-{v.strftime('%b')}" if k == "payref" else v.date().isoformat()   # %-d is not portable (Windows)
+            if isinstance(v, float) and v.is_integer(): v = int(v)
+            return "" if v is None else str(v).strip()
+        ticket = val("ticket")
+        method = method_of[g]
+        if g == "credit" and ticket.upper() == "WIRE": method, ticket = "wire", ""
+        tax = val("taxable").upper()
+        yield dict(sheet=ws.title, row=r, received=d or "", customer=val("customer").upper(), order=val("order"),
+                   ticket=ticket, payref=val("payref"), method=method, amount=f"{float(ws.cell(r, amount_cols[g]).value):.2f}",
+                   taxable={"YES": "Yes", "NO": "No"}.get(tax, ""), deposit_bank=val("bank").upper())

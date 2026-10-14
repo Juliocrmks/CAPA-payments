@@ -1,5 +1,5 @@
 """SQLite storage: users, documents/pages, payments, ledger submissions, learned data, audit log."""
-import sqlite3, json, os, hashlib, datetime, threading
+import sqlite3, json, os, re, hashlib, datetime, threading
 from .config import DB_PATH, SEED_PAYEES, SEED_BANKS, DEFAULT_SETTINGS
 from .registry import StaticRegistry, nkey
 
@@ -327,7 +327,8 @@ def set_ledger(pid, **changes):
         for k, v in changes.items():
             if v is not None: f[k] = v
         c.execute("UPDATE payments SET fields=?, updated_at=? WHERE id=?", (json.dumps(f), now(), pid))
-        c.execute("UPDATE submissions SET dirty=1, note='' WHERE payment_id=?", (pid,))
+        # only rows that live in the workbook sync back; uploaded imports (row NULL) stay in CheckFlow
+        c.execute("UPDATE submissions SET dirty=1, note='' WHERE payment_id=? AND row IS NOT NULL", (pid,))
         return True
 
 def dirty_rows():
@@ -410,3 +411,57 @@ def import_history(records, user):
                       (pid, "", rec["sheet"], rec["row"], now()))
             n += 1
         return n
+
+# ------------------------------------------------------------------ spreadsheet uploads (Ledger -> Import Excel)
+def ledger_fingerprints():
+    """Counter of sheet|day|cents|customer for every payment already in the ledger (scanned or imported)."""
+    from collections import Counter
+    from .excel.ledger_import import fingerprint
+    with conn() as c:
+        rows = c.execute("""SELECT p.fields, s.sheet FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
+                            WHERE p.status='submitted'""").fetchall()
+    out = Counter()
+    for r in rows:
+        f = json.loads(r["fields"] or "{}")
+        out[fingerprint(r["sheet"] or f.get("sheet"), f.get("received"), f.get("amount"), f.get("customer"))] += 1
+    return out
+
+def import_upload(records, user, batch, filename):
+    """Add uploaded rows to the ledger as one batch (undo removes the whole batch). row is left NULL so ledger edits
+    never write into the live workbook for rows that came from another file."""
+    tag = f"upload:{batch}:{filename}"[:200]
+    with _lock, conn() as c:
+        n = 0
+        for rec in records:
+            f = blank_fields() | {k: str(rec.get(k, "") or "") for k in KEYS if k in rec}
+            pid = c.execute("""INSERT INTO payments(status, fields, warns, sources, dedupe, imported, created_at, updated_at, submitted_at, submitted_by)
+                               VALUES('submitted',?,?,?,?,1,?,?,?,?)""", (json.dumps(f), "{}", '["import"]', dedupe_key(f), now(), now(),
+                                                                         rec.get("received") or now(), f"import:{user}")).lastrowid
+            c.execute("INSERT INTO submissions(payment_id, workbook, sheet, row, dirty, note, written_at) VALUES(?,?,?,NULL,0,'',?)",
+                      (pid, tag, rec.get("sheet") or "", now()))
+            n += 1
+        return n
+
+def import_batches():
+    with conn() as c:
+        rows = c.execute("""SELECT s.workbook, COUNT(*) AS n, MIN(s.written_at) AS at, MIN(p.submitted_by) AS by_,
+                                   MIN(json_extract(p.fields, '$.received')) AS first, MAX(json_extract(p.fields, '$.received')) AS last,
+                                   SUM(CAST(json_extract(p.fields, '$.amount') AS REAL)) AS total
+                            FROM submissions s JOIN payments p ON p.id=s.payment_id
+                            WHERE s.workbook LIKE 'upload:%' GROUP BY s.workbook ORDER BY at DESC""").fetchall()
+    out = []
+    for r in rows:
+        _, batch, name = (r["workbook"].split(":", 2) + ["", ""])[:3]
+        out.append(dict(batch=batch, filename=name, rows=r["n"], imported_at=r["at"], by=(r["by_"] or "").replace("import:", ""),
+                        first=r["first"], last=r["last"], total=round(r["total"] or 0, 2)))
+    return out
+
+def undo_import(batch):
+    if not re.fullmatch(r"[0-9a-f]{8,40}", batch or ""): return 0
+    with _lock, conn() as c:
+        ids = [r["payment_id"] for r in c.execute("SELECT payment_id FROM submissions WHERE workbook LIKE ?", (f"upload:{batch}:%",))]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]; q = ",".join("?" * len(chunk))
+            c.execute(f"DELETE FROM submissions WHERE payment_id IN ({q})", chunk)
+            c.execute(f"DELETE FROM payments WHERE id IN ({q}) AND imported=1", chunk)
+        return len(ids)

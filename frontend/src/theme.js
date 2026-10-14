@@ -14,8 +14,23 @@ export const brand = {
   validated: "#2E7D4F",
 };
 
-// Divisions get a triangle colour each, used for sheet chips everywhere.
-export const sheetColor = { MVC: brand.concrete, RIO: brand.pipe, UPPER: brand.asphalt, VCP: brand.clay };
+// Divisions get a colour each, used for sheet chips and charts alike (a payee looks the same everywhere).
+// MVC / UPPER / RIO are the logo triangles; VCP is aqua because brand clay fails colour-blind separation next to
+// the red (validated with the dataviz palette checker: adjacent and all-pairs pass).
+export const sheetColor = { MVC: brand.concrete, RIO: brand.pipe, UPPER: brand.asphalt, VCP: "#1BAF7A" };
+
+// Chart palette for entities without a fixed colour (validated categorical order; never cycled past 8).
+export const chartSeries = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
+export const chartGray = "#B5AFA9";        // "Other", de-emphasis, sparklines
+export const chartGrid = "#ECE8E4";
+export const methodChartColor = { check: chartSeries[0], cash: chartSeries[1], card: chartSeries[2], ach: chartSeries[3], wire: chartSeries[4] };
+
+// Ink or white text on a coloured fill, whichever reads better.
+export function inkOn(hex) {
+  const n = parseInt(hex.slice(1), 16), c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  const L = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#1F1712" : "#fff";
+}
 export const methodColor = { check: brand.brown, cash: brand.validated, card: brand.pipe, ach: "#4B5FA8", wire: "#6B4E9B" };
 
 const theme = createTheme({

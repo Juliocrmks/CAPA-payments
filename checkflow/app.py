@@ -1,7 +1,7 @@
 """CheckFlow API + static UI. Run with:  python run.py   (or CheckFlow.command / run.bat)"""
-import os, threading, queue, datetime, uuid, traceback
+import os, json, threading, queue, datetime, uuid, traceback
 import cv2
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, Depends, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -407,6 +407,118 @@ def do_import(r: ImportReq, user=Depends(require_admin)):
         raise HTTPException(400, f"Couldn't read the workbook: {e}")
     db.audit(user["username"], "import_" + r.what, count=n, sheets=sh)
     return dict(imported=n)
+
+# ------------------------------------------------------------------ spreadsheet upload into the ledger
+IMPORT_DIR = os.path.join(config.DATA, "imports")
+
+def _import_file(token):
+    if not token.isalnum(): raise HTTPException(404)
+    for ext in (".xlsx", ".xlsm", ".csv"):
+        p = os.path.join(IMPORT_DIR, token + ext)
+        if os.path.exists(p): return p
+    raise HTTPException(404, "That upload expired. Choose the file again.")
+
+def _read_upload(path, filename, date_policy="fix", parsed=None):
+    """Read (or reuse the preview's parsed copy), apply the date policy, then mark rows already in the ledger."""
+    from .excel import ledger_import
+    if parsed is None:
+        try: res = ledger_import.read_file(path, filename, sheets(), db.registry())
+        except ValueError as e: raise HTTPException(400, str(e))
+    else:
+        res = parsed
+    res["flagged"] = [dict(source=r.get("source", ""), sheet=r["sheet"], row=r["row"], customer=r["customer"], amount=r["amount"], **r["date_issue"])
+                      for r in res["records"] if r.get("date_issue")]
+    res["records"], res["fixed"], res["dropped"] = ledger_import.apply_date_policy(res["records"], date_policy)
+    ledger_import.mark_duplicates(res["records"], db.ledger_fingerprints())
+    return res
+
+@app.post("/api/import/excel")
+async def import_excel_preview(file: UploadFile = File(...), user=Depends(require_admin)):
+    """Step 1: read the spreadsheet and show what would be added. Nothing is written yet."""
+    from .excel import ledger_import
+    name = os.path.basename(file.filename or "upload.xlsx")
+    ext = os.path.splitext(name.lower())[1]
+    if ext not in (".xlsx", ".xlsm", ".csv"): raise HTTPException(400, "Choose an .xlsx, .xlsm or .csv file. (Old .xls files: open in Excel and Save As .xlsx.)")
+    os.makedirs(IMPORT_DIR, exist_ok=True)
+    for f in os.listdir(IMPORT_DIR):                 # uploads that were never committed
+        fp = os.path.join(IMPORT_DIR, f)
+        if os.path.getmtime(fp) < datetime.datetime.now().timestamp() - 86400: os.remove(fp)
+    token = uuid.uuid4().hex
+    path = os.path.join(IMPORT_DIR, token + ext)
+    with open(path, "wb") as fh: fh.write(await file.read())
+    with open(os.path.join(IMPORT_DIR, token + ".name"), "w", encoding="utf-8") as fh: fh.write(name)
+    from .excel import ledger_import as li
+    try: parsed = li.read_file(path, name, sheets(), db.registry())
+    except ValueError as e:
+        os.remove(path); raise HTTPException(400, str(e))
+    with open(os.path.join(IMPORT_DIR, token + ".json"), "w", encoding="utf-8") as fh: json.dump(parsed, fh)
+    res = _read_upload(path, name, parsed=json.loads(json.dumps(parsed)))
+    recs = res["records"]
+    new = [r for r in recs if not r["duplicate"]]
+    return dict(token=token, filename=name, formats=res["sheets"], warnings=res["warnings"], skipped=res["skipped"],
+                flagged_dates=res["flagged"], fixable=sum(1 for f in res["flagged"] if f["fix"]),
+                rows=len(recs), new=len(new), duplicates=len(recs) - len(new), total_new=round(sum(float(r["amount"]) for r in new), 2),
+                first=min(r["received"] for r in recs), last=max(r["received"] for r in recs),
+                per_sheet=ledger_import.summary(recs), needs_sheet=any(not r["sheet"] for r in recs), known_sheets=sheets(),
+                sample=[{k: r[k] for k in ("sheet", "received", "customer", "method", "payref", "ticket", "amount", "taxable", "duplicate", "source")}
+                        for r in (new[:12] or recs[:12])])
+
+class ImportCommit(BaseModel):
+    default_sheet: str = ""
+    date_policy: str = "fix"            # fix | skip | keep
+    include_duplicates: bool = False
+    sheets: list[str] = []
+    also_customers: bool = True
+
+@app.post("/api/import/excel/{token}")
+def import_excel_commit(token: str, r: ImportCommit, user=Depends(require_admin)):
+    """Step 2: add the previewed rows to the ledger as one batch (Undo removes the batch)."""
+    path = _import_file(token)
+    side = os.path.join(IMPORT_DIR, token + ".name")
+    name = open(side, encoding="utf-8").read().strip() if os.path.exists(side) else os.path.basename(path)
+    if r.date_policy not in ("fix", "skip", "keep"): raise HTTPException(400, "date_policy must be fix, skip or keep.")
+    cache = os.path.join(IMPORT_DIR, token + ".json")
+    parsed = json.load(open(cache, encoding="utf-8")) if os.path.exists(cache) else None
+    res = _read_upload(path, path, r.date_policy, parsed)
+    recs = [x for x in res["records"] if r.include_duplicates or not x["duplicate"]]
+    for x in recs:
+        if not x["sheet"]: x["sheet"] = r.default_sheet.strip().upper()
+    if any(not x["sheet"] for x in recs): raise HTTPException(400, "Some rows don't say which payee they belong to. Pick a payee for them.")
+    if r.sheets: recs = [x for x in recs if x["sheet"] in r.sheets]
+    batch = token[:16]
+    filename = name
+    n = db.import_upload(recs, user["username"], batch, filename)
+    if r.also_customers and recs:
+        names = {}
+        for x in recs: names.setdefault(x["customer"], set()).add(x["sheet"])
+        db.import_customers({k: sorted(v) for k, v in names.items() if len(k) >= 2})
+    for f in (path, side, cache):
+        try: os.remove(f)
+        except OSError: pass
+    db.audit(user["username"], "import_excel", count=n, batch=batch, file=filename)
+    return dict(imported=n, batch=batch, skipped_duplicates=sum(1 for x in res["records"] if x["duplicate"]) if not r.include_duplicates else 0)
+
+@app.get("/api/import/batches")
+def import_batches(_=Depends(require_admin)): return db.import_batches()
+
+@app.delete("/api/import/batches/{batch}")
+def import_undo(batch: str, user=Depends(require_admin)):
+    n = db.undo_import(batch)
+    if not n: raise HTTPException(404, "Import not found.")
+    db.audit(user["username"], "import_undone", count=n, batch=batch)
+    return dict(removed=n, batches=db.import_batches())
+
+# ================================================================== analytics
+@app.get("/api/analytics")
+def analytics_view(start: str = "", end: str = "", grain: str = "month", by: str = "sheet", sheet_list: str = Query("", alias="sheets"), customer: str = "",
+                   methods: str = "", banks: str = "", horizon: int = 3, _=Depends(require_admin)):
+    from . import analytics
+    split = lambda v: [x for x in v.split(",") if x]
+    try:
+        return analytics.analytics(start or None, end or None, grain, by, split(sheet_list), customer, split(methods), split(banks), horizon,
+                                   [b.strip().upper() for b in (db.get_setting("deposit_banks") or "").split(",") if b.strip()])
+    except ValueError as e:
+        raise HTTPException(400, f"Bad filter: {e}")
 
 @app.get("/api/audit")
 def audit_log(limit: int = 200, _=Depends(require_admin)):

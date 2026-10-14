@@ -7,6 +7,8 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DownloadIcon from "@mui/icons-material/Download";
 import CloseIcon from "@mui/icons-material/Close";
 import SyncProblemIcon from "@mui/icons-material/SyncProblem";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import ImportExcelDialog from "../components/ImportExcelDialog";
 import { api, money, num, fdate, METHODS, todayIso } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
@@ -58,6 +60,7 @@ export default function Ledger({ me }) {
   const [tax, setTax] = useState("any");
   const [onlyPending, setOnlyPending] = useState(false);
   const [group, setGroup] = useState("day");
+  const [importing, setImporting] = useState(false);
   const [sort, setSort] = useState(["received", "desc"]);
   const [closed, setClosed] = useState({});
   const [more, setMore] = useState({});
@@ -143,6 +146,7 @@ export default function Ledger({ me }) {
           <Typography variant="h1">Ledger <Triangles /></Typography>
           <Typography color="text.secondary">Every payment sent to the payee sheets. {isAdmin ? "Taxable and deposit bank" : "Taxable"} can be changed here; Excel follows.</Typography>
         </Box>
+        {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
         <Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>Export CSV</Button>
       </Stack>
 
@@ -222,6 +226,8 @@ export default function Ledger({ me }) {
         </Table>}
       </Paper>
       <DetailDrawer r={detail} isAdmin={isAdmin} banks={data.deposit_banks} onClose={() => setDetail(null)} onEdit={async (r, k, v) => { await edit(r, k, v); setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v } }); }} />
+      {isAdmin && <ImportExcelDialog open={importing} onClose={() => setImporting(false)}
+        onDone={(m, keepOpen) => { if (!keepOpen) { setImporting(false); setPeriod("all"); } say(m); load(); }} />}
       {toast}
     </Stack>
   );

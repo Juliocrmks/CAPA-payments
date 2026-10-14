@@ -6,13 +6,13 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ZoomInIcon from "@mui/icons-material/ZoomIn";
 import ZoomOutIcon from "@mui/icons-material/ZoomOut";
 import LockIcon from "@mui/icons-material/Lock";
-import { sheetColor, methodColor } from "../theme";
+import { sheetColor, methodColor, inkOn } from "../theme";
 import { METHODS } from "../api";
 
 export function SheetChip({ sheet, size = "small" }) {
   if (!sheet) return <Chip size={size} label="No sheet" variant="outlined" color="warning" />;
   const c = sheetColor[sheet] || "#7a6a60";
-  return <Chip size={size} label={sheet} sx={{ bgcolor: c, color: "#fff", borderRadius: "6px" }} />;
+  return <Chip size={size} label={sheet} sx={{ bgcolor: c, color: inkOn(c), borderRadius: "6px" }} />;
 }
 
 export function MethodChip({ method, size = "small" }) {
