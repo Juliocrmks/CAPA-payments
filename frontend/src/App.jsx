@@ -64,7 +64,7 @@ export default function App() {
           You're signed in with the default admin password. Change it before other people use CheckFlow on the network.
         </Alert>
       )}
-      <Box component="main" sx={{ flex: 1, width: "100%", maxWidth: current === "ledger" ? 1680 : 1320, mx: "auto", px: { xs: 1.5, md: 3 }, py: 3 }}>
+      <Box component="main" sx={{ flex: 1, width: "100%", maxWidth: current === "ledger" || current === "inbox" ? 1680 : 1320, mx: "auto", px: { xs: 1.5, md: 3 }, py: 3 }}>
         {current === "inbox" && <Inbox />}
         {current === "ledger" && <Ledger me={me} />}
         {current === "learned" && <Learned />}

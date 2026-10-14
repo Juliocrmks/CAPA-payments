@@ -1,42 +1,197 @@
 {
-  "_note": "Transcribed from page 1 (the printed day sheet) of each packet in references/. Used by tests/test_real_packets.py, which only runs when references/ exists.",
+  "_note": "Packets: transcribed from page 1 (printed day sheet). PHONE photos: the two phone pictures from the first day (angled, shadowed). Used by tests/test_real_packets.py when references/ has the files.",
   "MVC OCT_09-26.pdf": {
     "sheet": "MVC",
     "received": "2026-10-09",
     "payments": [
-      {"customer": "PENNY CONSTRUCTION", "ticket": "35390", "payref": "7801", "method": "ach", "amount": "5763.23"},
-      {"customer": "JUAN CANTU", "ticket": "35391", "payref": "6759", "method": "card", "amount": "146.06"},
-      {"customer": "DRP MASONRY", "ticket": "35392", "payref": "8274", "method": "ach", "amount": "40252.76"},
-      {"customer": "ESPERANZA HOMES", "ticket": "", "payref": "", "method": "wire", "amount": "10359.53"},
-      {"customer": "SAL CONSTRUCTION MANAGEMENT", "ticket": "", "payref": "16365", "method": "check", "amount": "78608.00"},
-      {"customer": "TURNER H CONSTRUCTION", "ticket": "", "payref": "50675", "method": "check", "amount": "206478.65"},
-      {"customer": "ELITE UTILITY & PAVING", "ticket": "35405", "payref": "57", "method": "check", "amount": "1493.85"},
-      {"customer": "TRI-GEN CONSTRUCTION", "ticket": "", "payref": "2427", "method": "check", "amount": "6210.43"}
+      {
+        "customer": "PENNY CONSTRUCTION",
+        "ticket": "35390",
+        "payref": "7801",
+        "method": "ach",
+        "amount": "5763.23"
+      },
+      {
+        "customer": "JUAN CANTU",
+        "ticket": "35391",
+        "payref": "6759",
+        "method": "card",
+        "amount": "146.06"
+      },
+      {
+        "customer": "DRP MASONRY",
+        "ticket": "35392",
+        "payref": "8274",
+        "method": "ach",
+        "amount": "40252.76"
+      },
+      {
+        "customer": "ESPERANZA HOMES",
+        "ticket": "",
+        "payref": "",
+        "method": "wire",
+        "amount": "10359.53"
+      },
+      {
+        "customer": "SAL CONSTRUCTION MANAGEMENT",
+        "ticket": "",
+        "payref": "16365",
+        "method": "check",
+        "amount": "78608.00"
+      },
+      {
+        "customer": "TURNER H CONSTRUCTION",
+        "ticket": "",
+        "payref": "50675",
+        "method": "check",
+        "amount": "206478.65"
+      },
+      {
+        "customer": "ELITE UTILITY & PAVING",
+        "ticket": "35405",
+        "payref": "57",
+        "method": "check",
+        "amount": "1493.85"
+      },
+      {
+        "customer": "TRI-GEN CONSTRUCTION",
+        "ticket": "",
+        "payref": "2427",
+        "method": "check",
+        "amount": "6210.43"
+      }
     ]
   },
   "UVM OCT_09_26.pdf": {
     "sheet": "UPPER",
     "received": "2026-10-09",
     "payments": [
-      {"customer": "SWINNEA CONSTRUCTION", "ticket": "35401", "payref": "1076", "method": "card", "amount": "82.51", "order": "QOU1710"},
-      {"customer": "BROWNSVILLE NAVIGATION", "ticket": "", "payref": "", "method": "wire", "amount": "2788.00"},
-      {"customer": "ELITE UTILITY & PAVING", "ticket": "35404", "payref": "55", "method": "check", "amount": "82403.00"},
-      {"customer": "JR GARCIA COMPANY", "ticket": "35407", "payref": "1624", "method": "check", "amount": "16021.16"},
-      {"customer": "JR GARCIA COMPANY", "ticket": "35408", "payref": "1625", "method": "check", "amount": "54435.07"},
-      {"customer": "SMITH & SONS", "ticket": "", "payref": "", "method": "check", "amount": "4000.00"},
-      {"customer": "TRI-GEN", "ticket": "", "payref": "2428", "method": "check", "amount": "6193.60"},
-      {"customer": "2LG CONSTRUCTION / A&I CUSTOM MAN", "ticket": "", "payref": "1458", "method": "check", "amount": "21000.00"}
+      {
+        "customer": "SWINNEA CONSTRUCTION",
+        "ticket": "35401",
+        "payref": "1076",
+        "method": "card",
+        "amount": "82.51",
+        "order": "QOU1710"
+      },
+      {
+        "customer": "BROWNSVILLE NAVIGATION",
+        "ticket": "",
+        "payref": "",
+        "method": "wire",
+        "amount": "2788.00"
+      },
+      {
+        "customer": "ELITE UTILITY & PAVING",
+        "ticket": "35404",
+        "payref": "55",
+        "method": "check",
+        "amount": "82403.00"
+      },
+      {
+        "customer": "JR GARCIA COMPANY",
+        "ticket": "35407",
+        "payref": "1624",
+        "method": "check",
+        "amount": "16021.16"
+      },
+      {
+        "customer": "JR GARCIA COMPANY",
+        "ticket": "35408",
+        "payref": "1625",
+        "method": "check",
+        "amount": "54435.07"
+      },
+      {
+        "customer": "SMITH & SONS",
+        "ticket": "",
+        "payref": "",
+        "method": "check",
+        "amount": "4000.00"
+      },
+      {
+        "customer": "TRI-GEN",
+        "ticket": "",
+        "payref": "2428",
+        "method": "check",
+        "amount": "6193.60"
+      },
+      {
+        "customer": "2LG CONSTRUCTION / A&I CUSTOM MAN",
+        "ticket": "",
+        "payref": "1458",
+        "method": "check",
+        "amount": "21000.00"
+      }
     ]
   },
   "RVP OCT_09_26 1.pdf": {
     "sheet": "RIO",
     "received": "2026-10-09",
     "payments": [
-      {"customer": "JR GARCIA COMPANY", "ticket": "35406", "payref": "1623", "method": "check", "amount": "14963.01"},
-      {"customer": "3E LOGISTICS OF TX", "ticket": "", "payref": "9500", "method": "check", "amount": "136219.16"},
-      {"customer": "TRI-GEN CONSTRUCTION", "ticket": "", "payref": "2429", "method": "check", "amount": "968.88"},
-      {"customer": "CJE CONSTRUCTION", "ticket": "35409", "payref": "1105", "method": "card", "amount": "1306.31", "order": "QUOR3111"},
-      {"customer": "CANO HOME BUILDERS", "ticket": "35410", "payref": "3007", "method": "card", "amount": "1023.90", "order": "QUOR3124"}
+      {
+        "customer": "JR GARCIA COMPANY",
+        "ticket": "35406",
+        "payref": "1623",
+        "method": "check",
+        "amount": "14963.01"
+      },
+      {
+        "customer": "3E LOGISTICS OF TX",
+        "ticket": "",
+        "payref": "9500",
+        "method": "check",
+        "amount": "136219.16"
+      },
+      {
+        "customer": "TRI-GEN CONSTRUCTION",
+        "ticket": "",
+        "payref": "2429",
+        "method": "check",
+        "amount": "968.88"
+      },
+      {
+        "customer": "CJE CONSTRUCTION",
+        "ticket": "35409",
+        "payref": "1105",
+        "method": "card",
+        "amount": "1306.31",
+        "order": "QUOR3111"
+      },
+      {
+        "customer": "CANO HOME BUILDERS",
+        "ticket": "35410",
+        "payref": "3007",
+        "method": "card",
+        "amount": "1023.90",
+        "order": "QUOR3124"
+      }
+    ]
+  },
+  "PHONE IOC check 57695.jpeg": {
+    "sheet": "RIO",
+    "received": "",
+    "payments": [
+      {
+        "customer": "IOC COMPANY",
+        "ticket": "",
+        "payref": "57695",
+        "method": "check",
+        "amount": "49744.36"
+      }
+    ]
+  },
+  "PHONE MorWil check 30547.jpeg": {
+    "sheet": "RIO",
+    "received": "",
+    "payments": [
+      {
+        "customer": "MOR-WIL",
+        "ticket": "",
+        "payref": "30547",
+        "method": "check",
+        "amount": "36628.00"
+      }
     ]
   }
 }

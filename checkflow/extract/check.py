@@ -120,6 +120,30 @@ def find_micr(img, items, known=()):
                     and not re.search(r"[A-Za-z]{2}", j["t"])]
             onus = "".join(re.findall(r"\d", " ".join(j["t"] for j in sorted(line, key=lambda j: j["x0"]))))
             return dict(routing=r, account=a, pre=pre, onus=onus, note=note, y=cy_(i), printed=printed)
+    return scan_for_micr(img, items, printed, known)
+
+def scan_for_micr(img, items, printed, known=()):
+    """Fallback when the page OCR never boxed the MICR line (it happens on angled phone photos and depends on
+    the OCR version): walk strips below the written amount line and re-read each one enlarged."""
+    H, Wd = img.shape[:2]
+    hs = sorted(h_(i) for i in items if len(i["t"]) >= 4)
+    th = max(12, hs[len(hs) // 2] if hs else 20)
+    anchors = [i for i in items if re.search(r"DOLLARS|DOLLAR", i["t"], re.I) or parse_written(i["t"])]
+    if not anchors: anchors = [i for i in items if "$" in i["t"] and MONEY.search(i["t"].replace(" ", ""))]
+    start = (min(cy_(a) for a in anchors) + th) if anchors else 0.25 * H
+    stop = min(H, start + 0.45 * Wd)
+    band_h, step = int(2.8 * th), max(8, int(1.3 * th))
+    y = int(start)
+    while y < stop:
+        y0, y1 = max(0, y - band_h // 2), min(H, y + band_h // 2)
+        band = cv2.resize(img[y0:y1, :], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        its = ocr(band)
+        text = " ".join(i["t"] for i in sorted(its, key=lambda i: i["x0"]))
+        if sum(c.isdigit() for c in text) >= 12:
+            r, a, pre, note = parse_micr([text], printed, known)
+            if r and a:
+                return dict(routing=r, account=a, pre=pre, onus="", note=note, y=float(y), printed=printed)
+        y += step
     return None
 
 FRACTION = re.compile(r"(?<!\d)\d{2}-\d{2,4}/\d{3,4}(?!\d)")      # ABA fraction printed on every check, e.g. 88-2299/1113
@@ -140,8 +164,13 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
     if micr["note"]: warns["routing"] = micr["note"]
     printed = micr["printed"]
     if acct:
+        from rapidfuzz.distance import Levenshtein
         corro = [p for p in printed if len(p) >= 6 and acct.startswith(p)]
+        near = [p for p in printed if len(p) >= 7 and p != routing and Levenshtein.distance(p, acct) <= 2 and abs(len(p) - len(acct)) <= 2]
         if corro: acct = max(corro, key=len)
+        elif near:      # e.g. the stub prints 'Bank #2513075935' and the MICR read dropped a digit
+            acct = max(near, key=lambda p: (printed.count(p), len(p)))
+            warns["account"] = "MICR read differed slightly; used the account number printed on the stub. Verify."
         else: warns["account"] = "Read from the MICR line only. Verify the digits."
         F["account"] = acct
     else:
@@ -182,8 +211,17 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
     for p, c in pc.items():
         sc = c + (4 if pre_join and p in pre_join else 0) + (1 if len(p) >= 4 else 0)
         if sc > bs: best, bs = p, sc
+    from rapidfuzz.distance import Levenshtein
+    digits_pre = re.sub(r"\D", "", pre_join)
+    def near(pn):      # printed number vs. the MICR on-us digits: equal, or one OCR slip apart
+        return any(Levenshtein.distance(pn, digits_pre[o:o + n]) <= 1
+                   for n in (len(pn) - 1, len(pn), len(pn) + 1) if n > 0 for o in range(0, max(1, len(digits_pre) - n + 1)))
+    close = [p for p in pc if len(p) >= 3 and near(p)] if digits_pre else []
     if best and pre_join and best in pre_join:
         F["check_no"] = best
+    elif close:
+        F["check_no"] = max(close, key=lambda p: (pc[p], len(p)))
+        warns["check_no"] = "MICR line and printed number differ by one digit; used the printed number. Verify."
     elif pre_join:
         tok = max(micr["pre"] + [micr.get("onus", "")], key=len).lstrip("0")
         tok = re.sub(r"^1(?=0)", "", tok).lstrip("0") if len(tok) > 4 else tok    # leading '1' = on-us symbol

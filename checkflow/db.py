@@ -47,8 +47,9 @@ def init():
     with _lock, conn() as c:
         legacy = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checks'").fetchone()
         c.executescript(SCHEMA)
-        for col in ("source TEXT DEFAULT 'local'", "display_name TEXT", "must_change INTEGER DEFAULT 0", "last_login TEXT"):
-            try: c.execute("ALTER TABLE users ADD COLUMN " + col)
+        for table, col in (("users", "source TEXT DEFAULT 'local'"), ("users", "display_name TEXT"), ("users", "must_change INTEGER DEFAULT 0"),
+                           ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0")):
+            try: c.execute(f"ALTER TABLE {table} ADD COLUMN " + col)
             except sqlite3.OperationalError: pass
         if legacy: _migrate_v1(c)
         c.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))

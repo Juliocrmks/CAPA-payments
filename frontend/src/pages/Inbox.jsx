@@ -111,11 +111,12 @@ export default function Inbox() {
         {jobs.length > 0 && (
           <Stack spacing={1.25} sx={{ mt: 2 }}>
             {jobs.slice(0, 6).map((j) => (
-              <Box key={j.id} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "minmax(160px, 320px) 1fr 160px" }, gap: { xs: .5, sm: 2 }, alignItems: "center" }}>
+              <Box key={j.id} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "minmax(160px, 320px) 1fr minmax(160px, 300px)" }, gap: { xs: .5, sm: 2 }, alignItems: "center" }}>
                 <Typography variant="body2" noWrap title={j.filename}>{j.filename}</Typography>
                 <LinearProgress variant="determinate" value={Math.round((j.progress || 0) * 100)} color={j.status === "error" ? "error" : j.status === "done" ? "success" : "secondary"} sx={{ height: 8, borderRadius: 4 }} />
-                <Typography variant="body2" color={j.status === "error" ? "error" : "text.secondary"} noWrap title={j.error || ""}>
-                  {j.status === "done" ? `Done · ${j.pages} pages` : j.status === "error" ? "Couldn't read" : j.status === "queued" ? "Waiting" : `Reading${j.pages ? ` ${j.pages} pages` : ""}…`}</Typography>
+                <Typography variant="body2" color={j.status === "error" ? "error" : j.status === "done" && j.error ? "#8a5300" : "text.secondary"} title={j.error || ""}>
+                  {j.status === "done" ? `${j.found ?? "?"} payment${j.found === 1 ? "" : "s"} from ${j.pages} page${j.pages === 1 ? "" : "s"}${j.error ? ` · ${j.error}` : ""}`
+                    : j.status === "error" ? `Couldn't read: ${j.error || "unknown error"}` : j.status === "queued" ? "Waiting" : `Reading${j.pages ? ` ${j.pages} pages` : ""}…`}</Typography>
               </Box>))}
           </Stack>
         )}

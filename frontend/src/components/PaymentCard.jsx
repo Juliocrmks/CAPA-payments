@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Paper, Box, Stack, TextField, MenuItem, Button, Chip, Alert, Autocomplete, IconButton, Menu, Typography, Tooltip, InputAdornment } from "@mui/material";
+import { Paper, Box, Stack, TextField, MenuItem, Button, Chip, Alert, Autocomplete, IconButton, Menu, Typography, Tooltip, InputAdornment, useMediaQuery } from "@mui/material";
+import DocViewer from "./DocViewer";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -41,6 +42,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
     setBusy(true);
     try { const r = await api.patch(`/api/payments/${p.id}`, { status: s }); onChange(r); } finally { setBusy(false); }
   };
+  const wide = useMediaQuery((t) => t.breakpoints.up("lg"));   // wide screens: the document sits large beside the form
   const validated = p.status === "validated";
   const W = (k) => warns?.[k];
   const fieldSx = (k) => W(k) ? { "& .MuiOutlinedInput-root": { bgcolor: warnBg }, "& .MuiOutlinedInput-notchedOutline": { borderColor: brand.concrete } } : {};
@@ -57,14 +59,14 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
   return (
     <Paper sx={{ p: { xs: 1.5, md: 2 }, borderWidth: 2, borderColor: validated ? brand.validated : "divider", transition: "border-color .2s" }}>
       {W("duplicate") && <Alert severity="error" sx={{ mb: 1.5 }}>{W("duplicate")}</Alert>}
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "260px 1fr" }, gap: 2 }}>
-        <Box>
+      <Box sx={{ display: "grid", gridTemplateColumns: wide ? "minmax(440px, 47%) 1fr" : { xs: "1fr", md: "260px 1fr" }, gap: wide ? 2.5 : 2 }}>
+        <Box sx={wide ? { position: "sticky", top: 76, alignSelf: "start" } : undefined}>
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
             <Typography variant="h3" sx={{ flex: 1 }}>#{p.id}</Typography>
             <SheetChip sheet={f.sheet} />
             {p.pages?.length > 0 && <IconButton size="small" aria-label="Page actions" onClick={(e) => setMenu(e.currentTarget)}><MoreVertIcon fontSize="small" /></IconButton>}
           </Stack>
-          <Thumbs pages={p.pages} onOpen={setLb} height={150} max={3} />
+          {wide ? <DocViewer pages={p.pages} height={540} onFullscreen={setLb} /> : <Thumbs pages={p.pages} onOpen={setLb} height={150} max={3} />}
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
             {p.pages?.length ? `${p.pages.length} page${p.pages.length > 1 ? "s" : ""}` : "No pages"}{sources ? ` · read from ${sources}` : ""}
           </Typography>
@@ -76,7 +78,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
           </Menu>
         </Box>
         <Box>
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" }, columnGap: 1.5, rowGap: 0.25 }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: wide ? "repeat(3, minmax(0, 1fr))" : { xs: "1fr 1fr", sm: "repeat(3, 1fr)" }, columnGap: 1.5, rowGap: 0.25 }}>
             <Autocomplete freeSolo options={meta.customers || []} value={f.customer || ""} sx={{ gridColumn: { xs: "1 / -1", sm: "span 2" } }}
               onInputChange={(_, v, reason) => reason !== "reset" && set("customer", (v || "").toUpperCase())}
               renderInput={(params) => <TextField {...params} label="Customer (as in the sheet)" helperText={W("customer") || (f.customer_raw && f.customer_raw.toUpperCase() !== f.customer ? `Read as: ${f.customer_raw}` : " ")}

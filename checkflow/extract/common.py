@@ -89,7 +89,8 @@ def date_from_filename(name):
 LEGAL = re.compile(r"[\s,]+(LLC|L\.L\.C\.?|INC\.?|CORP\.?|CO\.?|LTD\.?|LP)$", re.I)
 def customer_name(raw):
     """Name as the sheets write it: upper case, no punctuation noise, legal suffix dropped."""
-    s = re.sub(r"\s+", " ", (raw or "").replace(".", " ").replace(",", " ")).strip().upper()
+    raw = re.sub(r"(?<![A-Za-z])l(?=[A-Z]{2})", "I", raw or "")          # OCR reads a capital I as 'l' ('lOC' -> 'IOC')
+    s = re.sub(r"\s+", " ", raw.replace(".", " ").replace(",", " ")).strip().upper()
     s = re.sub(r"(?<=[A-Z])1(?=[A-Z])", "I", s); s = re.sub(r"(?<=[A-Z])0(?=[A-Z])", "O", s)
     s = re.sub(r"^(COD|C O D)[\s\-]+", "", s)          # 'COD-JUAN CANTU' -> 'JUAN CANTU' (cash-on-delivery prefix)
     prev = None

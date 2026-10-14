@@ -97,6 +97,8 @@ def parse_receipts(items, page_h):
     t = norm(text_of(items))
     if not ("RECEIVEDOF" in t or ("HOWPAID" in t and "CAPA" in t)): return []
     anchors = sorted([i for i in items if re.search(r"RECEIVED\s*OF", i["t"], re.I)], key=cy_)
+    if not anchors:      # 'RECEIVED OF' not read: the 'HOW PAID' box only exists on receipt slips (never on statements)
+        anchors = sorted([i for i in items if re.search(r"HOW\W*PAID", i["t"], re.I)], key=cy_)
     if not anchors: return []
     enders = sorted([i for i in items if re.search(r"THANK\s*YOU|BALANCE\s*DUE", i["t"], re.I)], key=cy_)
     nums = sorted(receipt_numbers(items), key=lambda x: cy_(x[0]))

@@ -83,9 +83,11 @@ tools/benchmark.py         extraction accuracy against the real packets' printed
 .venv/bin/python -m tools.benchmark     # per-payment accuracy report on references/*.pdf
 ```
 
-`references/` (real scans, the real workbook) is git-ignored: it holds account numbers, card photos and an ID.
-Accuracy on the 3 packets of Oct 9 2026 (21 payments): found 20/21 · method 95% · check/ref # 95% · amount 86% ·
-customer 76% · ticket 71%. Misses are handwritten amounts and receipt numbers, which the review screen highlights.
+`references/` (real scans, phone photos, the real workbook) is git-ignored: it holds account numbers, card photos and an
+ID. Accuracy on the 3 packets of Oct 9 2026 plus 2 phone photos (23 payments): found 22/23 · method 96% · check/ref #
+96% · amount 87% · customer 74% · ticket 74%. Misses are handwritten amounts and receipt numbers, which the review
+screen highlights. A page with no readable payment still becomes a card ("fill it in from the image"); nothing is
+dropped silently. OCR is pinned to rapidocr-onnxruntime 1.2.3: the benchmark is the tool for judging an upgrade.
 
 ## Frontend development
 

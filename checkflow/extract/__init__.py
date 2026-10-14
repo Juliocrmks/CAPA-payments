@@ -108,6 +108,9 @@ def group(records, pages):
             prev = [p for p in pays if p["primary"] <= pg["index"]]
             target = prev[-1] if prev else (pays[0] if pays else None)
         if target: target["pages"] = sorted(set(target["pages"] + [pg["index"]]))
+        else:
+            pays.append(dict(fields={"method": "check"}, pages=[pg["index"]], primary=pg["index"], sources=["unread"],
+                             warns={"page": "Couldn't find a payment on this page. Fill it in from the image, or remove it."}))
     return pays
 
 def process(data, filename, reg, received=None, progress=None):
@@ -123,7 +126,10 @@ def process(data, filename, reg, received=None, progress=None):
     seen = {r["fields"]["routing"] for r in records if r["fields"].get("routing")}
     for k in retry:
         up, kind, recs, _ = analyze_page(pages[k]["image"], reg, received, seen)
-        pages[k]["kind"] = kind if kind != "check?" else "support"
+        pages[k]["kind"] = "check" if kind == "check?" else kind
+        if kind == "check?":
+            records.append(dict(kind="check", page=k, y=0, fields={"method": "check"},
+                                warns={"page": "Looks like a check, but the bank line at the bottom couldn't be read. Type the details from the image."}))
         for r in recs:
             if not any(x["page"] == k and x["kind"] == r["kind"] for x in records): records.append(dict(r, page=k))
     records.sort(key=lambda r: (r["page"], r["y"]))

@@ -169,7 +169,10 @@ def _worker():
                     f["sheet"] = sheet_hint; p["warns"].pop("sheet", None)
                 if not f.get("received"): f["received"] = received or datetime.date.today().isoformat()
                 db.add_payment(doc_id, f, p["warns"], p["sources"], [page_ids[i] for i in p["pages"] if i in page_ids])
-            db.update_document(doc_id, status="done", progress=1, pages=len(res["pages"]), received=res.get("received") or received or "")
+            unread = sum(1 for p in res["payments"] if "page" in p["warns"])
+            db.update_document(doc_id, status="done", progress=1, pages=len(res["pages"]), received=res.get("received") or received or "",
+                               error=(f"{unread} page{'s' if unread > 1 else ''} need typing in" if unread else None),
+                               found=len(res["payments"]))
         except Exception as e:
             traceback.print_exc()
             db.update_document(doc_id, status="error", error=f"{type(e).__name__}: {e}"[:400])

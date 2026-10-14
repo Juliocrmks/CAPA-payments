@@ -91,3 +91,19 @@ def test_grouping_pairs_receipts_in_order_and_falls_back_to_cash():
     assert by_ref["1625"]["fields"]["ticket"] == "35408" and by_ref["1625"]["fields"]["amount"] == "54435.07"
     cash = [p for p in pays if p["fields"].get("method") == "cash"]
     assert len(cash) == 1 and cash[0]["fields"]["ticket"] == "35500"
+
+def test_page_with_no_payment_becomes_a_card():
+    """Nothing is dropped silently: a lone page with no recognisable payment still shows up for review."""
+    pays = group([], [dict(index=0, kind="support")])
+    assert len(pays) == 1 and "page" in pays[0]["warns"] and pays[0]["pages"] == [0]
+
+def test_unreadable_check_page_becomes_its_own_card(monkeypatch):
+    """A page that looks like a check but whose MICR line can't be read gets its own card (not hidden as a support page)."""
+    import numpy as np, cv2
+    import checkflow.extract as X
+    monkeypatch.setattr(X, "analyze_page", lambda img, reg, received, batch=(): (img, "check?", [], []))
+    ok, png = cv2.imencode(".png", np.full((60, 80, 3), 255, np.uint8))
+    res = X.process(png.tobytes(), "photo.png", StaticRegistry(), "2026-10-13")
+    assert len(res["payments"]) == 1
+    p = res["payments"][0]
+    assert p["fields"]["method"] == "check" and "bank line" in p["warns"]["page"] and p["fields"]["received"] == "2026-10-13"
