@@ -48,7 +48,7 @@ def init():
         legacy = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checks'").fetchone()
         c.executescript(SCHEMA)
         for table, col in (("users", "source TEXT DEFAULT 'local'"), ("users", "display_name TEXT"), ("users", "must_change INTEGER DEFAULT 0"),
-                           ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0")):
+                           ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0"), ("submissions", "excel_fields TEXT")):
             try: c.execute(f"ALTER TABLE {table} ADD COLUMN " + col)
             except sqlite3.OperationalError: pass
         if legacy: _migrate_v1(c)
@@ -294,8 +294,9 @@ def move_page(page_id, from_pid, to_pid=None):
 def mark_submitted(pid, workbook, sheet, row, user):
     with _lock, conn() as c:
         c.execute("UPDATE payments SET status='submitted', submitted_at=?, submitted_by=? WHERE id=?", (now(), user, pid))
-        c.execute("INSERT OR REPLACE INTO submissions(payment_id, workbook, sheet, row, dirty, note, written_at) VALUES(?,?,?,?,0,'',?)",
-                  (pid, workbook, sheet, row, now()))
+        f = c.execute("SELECT fields FROM payments WHERE id=?", (pid,)).fetchone()["fields"]
+        c.execute("""INSERT OR REPLACE INTO submissions(payment_id, workbook, sheet, row, dirty, note, written_at, excel_fields)
+                     VALUES(?,?,?,?,0,'',?,?)""", (pid, workbook, sheet, row, now(), f))
 
 def set_rows(updates):
     with _lock, conn() as c:
@@ -315,32 +316,46 @@ def ledger_rows():
     for r in rows:
         f = blank_fields() | json.loads(r["fields"])
         out.append(dict(id=r["id"], fields=f, imported=bool(r["imported"]), submitted_at=r["submitted_at"], submitted_by=r["submitted_by"],
-                        sheet=r["s_sheet"] or f.get("sheet"), row=r["s_row"], pending=bool(r["s_dirty"]), note=r["s_note"] or "",
+                        sheet=f.get("sheet") or r["s_sheet"], row=r["s_row"], pending=bool(r["s_dirty"]), note=r["s_note"] or "",
                         pages=pages.get(r["id"], [])))
     return out
 
 def set_ledger(pid, **changes):
+    """Any ledger edit (AR: Taxable; admin: any field). The row is queued for Excel: the sync loop finds it by what
+    was last written there (excel_fields) and rewrites it, or moves it when the sheet, day or method group changed."""
     with _lock, conn() as c:
-        r = c.execute("SELECT fields FROM payments WHERE id=? AND status='submitted'", (pid,)).fetchone()
+        r = c.execute("""SELECT p.fields, s.excel_fields, s.sheet FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
+                         WHERE p.id=? AND p.status='submitted'""", (pid,)).fetchone()
         if not r: return False
         f = json.loads(r["fields"])
+        if not r["excel_fields"]:                         # first edit since it was written: remember what Excel holds now
+            c.execute("UPDATE submissions SET excel_fields=? WHERE payment_id=?", (json.dumps(f | {"sheet": r["sheet"] or f.get("sheet")}), pid))
         for k, v in changes.items():
             if v is not None: f[k] = v
-        c.execute("UPDATE payments SET fields=?, updated_at=? WHERE id=?", (json.dumps(f), now(), pid))
+        c.execute("UPDATE payments SET fields=?, dedupe=?, updated_at=? WHERE id=?", (json.dumps(f), dedupe_key(f), now(), pid))
         # only rows that live in the workbook sync back; uploaded imports (row NULL) stay in CheckFlow
         c.execute("UPDATE submissions SET dirty=1, note='' WHERE payment_id=? AND row IS NOT NULL", (pid,))
+        c.execute("UPDATE submissions SET sheet=? WHERE payment_id=? AND row IS NULL", (f.get("sheet") or "", pid))
         return True
 
 def dirty_rows():
     with conn() as c:
-        rows = c.execute("""SELECT p.id, p.fields, s.sheet, s.row FROM payments p JOIN submissions s ON s.payment_id=p.id
+        rows = c.execute("""SELECT p.id, p.fields, s.sheet, s.row, s.excel_fields FROM payments p JOIN submissions s ON s.payment_id=p.id
                             WHERE s.dirty=1""").fetchall()
-    return [dict(id=r["id"], fields=json.loads(r["fields"]), sheet=r["sheet"], row=r["row"]) for r in rows]
+    out = []
+    for r in rows:
+        f = json.loads(r["fields"])
+        x = json.loads(r["excel_fields"]) if r["excel_fields"] else dict(f)
+        x["sheet"] = r["sheet"] or x.get("sheet")
+        out.append(dict(id=r["id"], fields=f, excel=x, sheet=r["sheet"], row=r["row"]))
+    return out
 
-def sync_result(pid, row=None, note=""):
+def sync_result(pid, row=None, note="", sheet=None, fields=None):
     with _lock, conn() as c:
         if note: c.execute("UPDATE submissions SET note=? WHERE payment_id=?", (note, pid))
-        else: c.execute("UPDATE submissions SET dirty=0, note='', row=COALESCE(?, row) WHERE payment_id=?", (row, pid))
+        else: c.execute("""UPDATE submissions SET dirty=0, note='', row=COALESCE(?, row), sheet=COALESCE(?, sheet),
+                           excel_fields=COALESCE(?, excel_fields), written_at=? WHERE payment_id=?""",
+                        (row, sheet, json.dumps(fields) if fields else None, now(), pid))
 
 def submitted_on(sheet, received):
     """Payments already written for one sheet/day (their rows move when a day block is rebuilt)."""

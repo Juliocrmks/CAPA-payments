@@ -245,6 +245,61 @@ def find_row(lay, it, hint=None):
         if ok(r): return r
     return None
 
+FIELD_COL = {"customer": "customer", "order": "order", "ticket": "ticket", "payref": "payref", "taxable": "taxable", "deposit_bank": "bank"}
+
+def _rewrite_row(lay, r, it, keys):
+    """Same sheet, day and method group: write only the changed fields into the row where it already is, so
+    everything else in a hand-typed row stays exactly as typed. The amount stays in its column, so the SUMs hold."""
+    tpl = _templates(lay)
+    _, g, vals = _entry_snapshot(lay, tpl, it)
+    ws, cols = lay.ws, lay.cols
+    targets = {cols[FIELD_COL[k]] for k in keys if k in FIELD_COL and FIELD_COL[k] in cols}
+    if "method" in keys and "ticket" in cols: targets.add(cols["ticket"])        # card <-> ACH <-> wire changes the WIRE marker
+    amount_col = lay.amount_cols.get(g) or lay.amount_cols.get("credit") or cols["check"]
+    if "amount" in keys: targets.add(amount_col)
+    for c in targets:
+        v = vals.get(c)
+        cell = ws.cell(r, c)
+        cell.value = v
+        if isinstance(v, float): cell.number_format = "#,##0.00"
+        elif isinstance(v, datetime.datetime): cell.number_format = "d-mmm"
+
+def _empty_row(lay, r):
+    """Take a payment out of its old day block without moving any rows (so no formula anywhere shifts): its values
+    are removed and that day's =SUM subtotals drop it on their own."""
+    for c in range(1, MAXC):
+        lay.ws.cell(r, c).value = None
+
+EXCEL_FIELDS = ("sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "deposit_bank")
+
+def sync_rows(path, items):
+    """Apply ledger edits to rows already in the workbook. items: [{id, row, old, new}] where old = the values last
+    written to Excel (incl. sheet) and new = the ledger's values now. -> {id: ('ok', sheet, row, moved) | ('err', msg)}
+    Same sheet + day + method group -> changed cells rewritten in place. Otherwise the old row is emptied and the
+    payment is written into its new day block (merged when that day is the sheet's latest block). One save."""
+    wb = load(path)
+    out, changed = {}, False
+    for it in items:
+        old, new = it["old"], it["new"]
+        if old.get("sheet") not in wb.sheetnames: out[it["id"]] = ("err", f"Sheet '{old.get('sheet')}' not found."); continue
+        if new.get("sheet") not in wb.sheetnames: out[it["id"]] = ("err", f"Sheet '{new.get('sheet')}' is not in the workbook."); continue
+        lay = Layout(wb[old["sheet"]])
+        r = find_row(lay, old, it.get("row"))
+        if not r: out[it["id"]] = ("err", "Row not found in the sheet (was it moved or edited by hand?)."); continue
+        keys = [k for k in EXCEL_FIELDS if str(old.get(k) or "") != str(new.get(k) or "")]
+        same = old["sheet"] == new["sheet"] and old.get("received") == new.get("received") and group_for(old.get("method")) == group_for(new.get("method"))
+        if same:
+            _rewrite_row(lay, r, new, keys)
+            out[it["id"]] = ("ok", new["sheet"], r, False)
+        else:
+            _empty_row(lay, r)
+            try: rows = write_day(wb[new["sheet"]], new["received"], [dict(new, id="moved")])
+            except ValueError as e: out[it["id"]] = ("err", str(e)); continue
+            out[it["id"]] = ("ok", new["sheet"], rows["moved"], True)
+        changed = True
+    if changed: save(wb, path, backup_min_age=600)
+    return out
+
 def update_rows(path, updates):
     """updates: [{id, sheet, row, received, customer, amount, taxable, deposit_bank}] -> {id: ('ok', row) | ('err', msg)}"""
     wb = load(path)

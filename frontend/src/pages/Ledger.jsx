@@ -9,6 +9,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import SyncProblemIcon from "@mui/icons-material/SyncProblem";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import ImportExcelDialog from "../components/ImportExcelDialog";
+import DayBankTotals from "../components/DayBankTotals";
 import { api, money, num, fdate, METHODS, todayIso } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
@@ -74,6 +75,7 @@ export default function Ledger({ me }) {
     const t = setInterval(load, 30000); return () => clearInterval(t);
   }, [data, load]);
   useEffect(() => { const [a, b] = periodRange(period); if (period !== "custom") { setFrom(a); setTo(b); } }, [period]);
+  useEffect(() => { if (data) setDetail((d) => (d ? data.rows.find((x) => x.id === d.id) || null : d)); }, [data]);   // drawer follows reloads (row, sheet)
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -104,6 +106,9 @@ export default function Ledger({ me }) {
     return out;
   }, [rows, group, sort]);
 
+  const dayRows = useMemo(() => (data ? data.rows.filter((r) => (!sheets.length || sheets.includes(r.sheet)) && (!methods.length || methods.includes(r.fields.method))) : []),
+    [data, sheets, methods]);
+
   const totals = useMemo(() => {
     const t = { all: 0, taxable: 0, notTaxable: 0, unset: 0, byBank: {} };
     rows.forEach((r) => { const a = num(r.fields.amount); t.all += a;
@@ -112,17 +117,21 @@ export default function Ledger({ me }) {
     return t;
   }, [rows]);
 
+  // One road for every ledger edit (AR: Taxable; admin: any field): saved at once, Excel follows (now, or once the workbook is closed).
   const edit = async (r, k, v) => {
     const prev = r.fields[k];
-    setData((d) => ({ ...d, rows: d.rows.map((x) => x.id === r.id ? { ...x, fields: { ...x.fields, [k]: v } } : x) }));
+    const patch = (val) => (x) => x.id === r.id ? { ...x, fields: { ...x.fields, [k]: val }, ...(k === "sheet" ? { sheet: val } : {}) } : x;
+    setData((d) => ({ ...d, rows: d.rows.map(patch(v)) }));
     try {
       const res = await api.patch(`/api/ledger/${r.id}`, { [k]: v });
-      say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved (imported row, Excel not changed)." : "Saved and updated in Excel.",
+      if (res.excel !== "unchanged") say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved in CheckFlow (this row isn't in the workbook)." : "Saved and updated in Excel.",
         res.excel === "pending" ? "warning" : "success");
       load();
+      return true;
     } catch (e) {
-      setData((d) => ({ ...d, rows: d.rows.map((x) => x.id === r.id ? { ...x, fields: { ...x.fields, [k]: prev } } : x) }));
+      setData((d) => ({ ...d, rows: d.rows.map(patch(prev)) }));
       say(e.message, "error");
+      return false;
     }
   };
 
@@ -144,7 +153,7 @@ export default function Ledger({ me }) {
       <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "flex-end" }} spacing={1}>
         <Box sx={{ flex: 1 }}>
           <Typography variant="h1">Ledger <Triangles /></Typography>
-          <Typography color="text.secondary">Every payment sent to the payee sheets. {isAdmin ? "Taxable and deposit bank" : "Taxable"} can be changed here; Excel follows.</Typography>
+          <Typography color="text.secondary">Every payment sent to the payee sheets. {isAdmin ? "Click a payment to correct any of its details" : "Taxable can be changed here"}; Excel follows.</Typography>
         </Box>
         {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
         <Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>Export CSV</Button>
@@ -160,6 +169,8 @@ export default function Ledger({ me }) {
         <Stat label="Not taxable" value={money(totals.notTaxable)} color={brand.pipe} />
         <Stat label="Taxable not set" value={totals.unset.toLocaleString()} color={brand.asphalt} sub={totals.unset ? "needs a decision" : "all decided"} />
       </Paper>
+
+      <DayBankTotals rows={dayRows} banks={data.deposit_banks} />
 
       <Paper sx={{ p: 2 }}>
         <Stack spacing={1.5}>
@@ -225,7 +236,8 @@ export default function Ledger({ me }) {
           </TableBody>
         </Table>}
       </Paper>
-      <DetailDrawer r={detail} isAdmin={isAdmin} banks={data.deposit_banks} onClose={() => setDetail(null)} onEdit={async (r, k, v) => { await edit(r, k, v); setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v } }); }} />
+      <DetailDrawer r={detail} isAdmin={isAdmin} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
+        onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
       {isAdmin && <ImportExcelDialog open={importing} onClose={() => setImporting(false)}
         onDone={(m, keepOpen) => { if (!keepOpen) { setImporting(false); setPeriod("all"); } say(m); load(); }} />}
       {toast}
@@ -279,16 +291,38 @@ function LedgerRow({ r, isAdmin, banks, onEdit, onOpen }) {
   );
 }
 
-function DetailDrawer({ r, isAdmin, banks, onClose, onEdit }) {
+// Admins correct any detail here; each field saves on its own (Enter or leaving the field), like the Taxable dropdown.
+function EditField({ label, value, onSave, type = "text", options, help }) {
+  const [v, setV] = useState(value || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setV(value || ""); }, [value]);
+  const commit = async (nv = v) => {
+    if ((nv || "") === (value || "") || busy) return;
+    setBusy(true); const ok = await onSave(nv); setBusy(false);
+    if (!ok) setV(value || "");
+  };
+  if (options) return (
+    <TextField select label={label} value={v} disabled={busy} helperText={help} onChange={(e) => { setV(e.target.value); commit(e.target.value); }}>
+      {options.map(([k, l]) => <MenuItem key={k} value={k}>{l}</MenuItem>)}</TextField>);
+  return (
+    <TextField label={label} type={type} value={v} disabled={busy} helperText={help} InputLabelProps={type === "date" ? { shrink: true } : undefined}
+      onChange={(e) => setV(e.target.value)} onBlur={() => commit()}
+      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setV(value || ""); } }} />);
+}
+
+function DetailDrawer({ r, isAdmin, banks, sheets, onClose, onEdit }) {
   const [lb, setLb] = useState(null);
   if (!r) return null;
   const f = r.fields;
-  const rows = [["Received", fdate(f.received)], ["Customer", f.customer], ["Method", METHODS[f.method]], ["Amount", money(f.amount)], ["Ticket ref", f.ticket],
+  const save = (k) => (v) => onEdit(r, k, v);
+  const info = [["Received", fdate(f.received)], ["Customer", f.customer], ["Method", METHODS[f.method]], ["Amount", money(f.amount)], ["Ticket ref", f.ticket],
     ["Payment ref", f.payref], ["Order #", f.order], ["Check #", f.check_no], ["Check / paid date", fdate(f.doc_date)], ["Bank (drawn on)", f.bank],
     ["Routing", f.routing], ["Account", f.account], ["Card", f.card_brand && `${f.card_brand} ****${f.last4}`], ["Confirmation", f.confirmation],
     ["Invoice", f.invoice], ["Bank posting", f.memo], ["Sent to Excel", `${fdate((r.submitted_at || "").slice(0, 10))} by ${r.submitted_by || "?"}`]].filter(([, v]) => v);
+  const readOnly = isAdmin ? info.filter(([k]) => ["Check / paid date", "Routing", "Account", "Card", "Bank posting", "Sent to Excel"].includes(k)) : info;
+  const sheetOpts = (sheets.includes(r.sheet) || !r.sheet ? sheets : [r.sheet, ...sheets]).map((s) => [s, s]);
   return (
-    <Drawer anchor="right" open onClose={onClose} PaperProps={{ sx: { width: { xs: "100%", sm: 480 }, p: 3, border: 0 } }}>
+    <Drawer anchor="right" open onClose={onClose} PaperProps={{ sx: { width: { xs: "100%", sm: 520 }, p: 3, border: 0 } }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Typography variant="h2" sx={{ flex: 1 }}>{f.customer || "Payment"}</Typography>
         <IconButton aria-label="Close" onClick={onClose}><CloseIcon /></IconButton>
@@ -300,8 +334,26 @@ function DetailDrawer({ r, isAdmin, banks, onClose, onEdit }) {
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
       </Stack>
       {r.pending && <Alert severity="warning" sx={{ mb: 2 }}>{r.note || "Waiting to be written to Excel."}</Alert>}
+      {isAdmin && <>
+        <Divider sx={{ mb: 2 }} />
+        <Typography variant="h3" sx={{ mb: .5 }}>Correct this payment</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Each change saves on its own and is written to the workbook.
+          {r.row ? " Changing the date, payee or method moves it to that day's block; its old row is emptied and the day's subtotals stay right." : " This row came from an import, so only CheckFlow changes."}</Typography>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, mb: 2 }}>
+          <EditField label="Date received" type="date" value={f.received} onSave={save("received")} />
+          <EditField label="Payee sheet" value={r.sheet} options={sheetOpts} onSave={save("sheet")} />
+          <Box sx={{ gridColumn: { sm: "1 / -1" } }}><EditField label="Customer" value={f.customer} onSave={save("customer")} /></Box>
+          <EditField label="Method" value={f.method} options={Object.entries(METHODS)} onSave={save("method")} />
+          <EditField label="Amount" value={f.amount} onSave={save("amount")} />
+          <EditField label="Ticket ref" value={f.ticket} onSave={save("ticket")} />
+          <EditField label="Payment ref / check #" value={f.payref} onSave={save("payref")} />
+          <EditField label="Order #" value={f.order} onSave={save("order")} />
+          <EditField label="Invoice" value={f.invoice} onSave={save("invoice")} />
+          <Box sx={{ gridColumn: { sm: "1 / -1" } }}><EditField label="Bank (drawn on)" value={f.bank} onSave={save("bank")} /></Box>
+        </Box>
+      </>}
       <Divider sx={{ mb: 1 }} />
-      <Table size="small"><TableBody>{rows.map(([k, v]) => <TableRow key={k}><TableCell sx={{ color: "text.secondary", width: 150, border: 0 }}>{k}</TableCell><TableCell sx={{ border: 0 }}>{v}</TableCell></TableRow>)}</TableBody></Table>
+      <Table size="small"><TableBody>{readOnly.map(([k, v]) => <TableRow key={k}><TableCell sx={{ color: "text.secondary", width: 150, border: 0 }}>{k}</TableCell><TableCell sx={{ border: 0 }}>{v}</TableCell></TableRow>)}</TableBody></Table>
       {lb !== null && <Lightbox pages={r.pages} index={lb} onClose={() => setLb(null)} />}
     </Drawer>
   );

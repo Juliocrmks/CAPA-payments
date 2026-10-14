@@ -44,8 +44,15 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    written and you're told to close it.
 3. **Ledger** (admin + AR): search, quick period filters, sheet/method/taxable filters, group by day / week /
    month / quarter / company / sheet / method / deposit bank / taxable, sortable columns, subtotals, taxable totals
-   per deposit bank, CSV export, page images. **AR users can only change Taxable**; admins also change Deposit bank.
-   Edits are written to the workbook (retried every 30 s while it's open in Excel).
+   per deposit bank, CSV export, page images. **AR users can only change Taxable.** **Admins can correct any detail**
+   of a sent payment (date, payee, customer, method, amount, refs, bank) from its side panel. Every edit takes the
+   same road: saved at once, then written to the workbook (retried every 30 s while it's open in Excel). Same day,
+   payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
+   and its old row is emptied, so no rows shift and every `=SUM` stays right.
+
+   **Daily bank totals** (everyone): for one day received, what went into each deposit bank as cash, checks and
+   card/ACH/wire, how much is taxable, not taxable and not set yet, by bank or by bank and payee, with CSV. It is
+   computed from the ledger on screen, so it changes the moment a Taxable, bank or amount is edited.
 
    **Import Excel** (admin): add past payments from any spreadsheet. The payee workbook itself (day blocks, any
    year) or a plain table with Date, Customer and Amount columns (Method, Check #, Ticket, Payee, Deposit bank and
@@ -90,7 +97,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (74 tests)
+tests/                     pytest suite (80 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

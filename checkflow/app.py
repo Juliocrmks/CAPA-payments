@@ -321,43 +321,80 @@ def ledger(user=Depends(require_user)):
         for r in rows: r["pages"] = [p for p in r["pages"] if not p["sensitive"]]
     return dict(rows=rows, sheets=sheets(), deposit_banks=[b.strip() for b in (db.get_setting("deposit_banks") or "").split(",") if b.strip()])
 
-class LedgerPatch(BaseModel):
-    taxable: str | None = None
-    deposit_bank: str | None = None
+# Ledger edits: AR may set Taxable; admins may correct any field of a payment already sent to Excel.
+# Every edit takes the same road: saved at once, row queued, written to the workbook now or by the 30 s retry loop.
+EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "deposit_bank"]
+EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo"]
+WB_OPEN = "The workbook is open in Excel. Your change is saved and will be written automatically once it is closed."
 
 def push_to_excel():
     rows = db.dirty_rows()
     if not rows: return 0, ""
-    ups = []
-    for r in rows:
-        f = r["fields"]
-        ups.append(dict(id=r["id"], sheet=r["sheet"], row=r["row"], received=f.get("received"), customer=f.get("customer"),
-                        amount=f.get("amount"), taxable=f.get("taxable", ""), deposit_bank=f.get("deposit_bank", "")))
+    pick = lambda f: {k: f.get(k, "") for k in EXCEL_KEYS}
+    items = [dict(id=r["id"], row=r["row"], old=pick(r["excel"]), new=pick(r["fields"])) for r in rows]
     try:
-        with WB_LOCK: res = writer.update_rows(workbook_path(), ups)
+        with WB_LOCK: res = writer.sync_rows(workbook_path(), items)
     except writer.WorkbookError as e:
-        msg = "The workbook is open in Excel. Your change is saved and will be written automatically once it is closed." \
-              if "open in Excel" in str(e) else str(e)
+        msg = WB_OPEN if "open in Excel" in str(e) else str(e)
         for r in rows: db.sync_result(r["id"], note=msg)
         return len(rows), msg
-    left, msg = 0, ""
-    for pid, (st, v) in res.items():
-        if st == "ok": db.sync_result(pid, row=v)
-        else: db.sync_result(pid, note=v); left += 1; msg = v
+    left, msg, moved = 0, "", set()
+    fields = {r["id"]: r["fields"] for r in rows}
+    for pid, out in res.items():
+        if out[0] == "ok":
+            _, sheet, row, mv = out
+            db.sync_result(pid, row=row, sheet=sheet, fields=fields[pid])
+            if mv: moved.add((sheet, fields[pid].get("received")))
+        else:
+            db.sync_result(pid, note=out[1]); left += 1; msg = out[1]
+    if moved: _relocate(moved)
     return left, msg
 
+def _clean_edit(before, body, user):
+    """Validate one ledger edit -> {field: new value} (only what actually changes)."""
+    unknown = [k for k in body if k not in EDITABLE]
+    if unknown: raise HTTPException(400, "These fields can't be edited: " + ", ".join(unknown))
+    if user["role"] != "admin" and set(body) - {"taxable"}: raise HTTPException(403, "You can only change the Taxable field.")
+    old = before["fields"]
+    new = {k: ("" if v is None else str(v).strip()) for k, v in body.items()}
+    if "amount" in new:
+        try: amt = float(new["amount"].replace(",", "").replace("$", ""))
+        except ValueError: raise HTTPException(400, "Amount must be a number.")
+        if amt <= 0: raise HTTPException(400, "Amount must be more than zero.")
+        new["amount"] = f"{amt:.2f}"
+    if "received" in new:
+        try: datetime.date.fromisoformat(new["received"])
+        except ValueError: raise HTTPException(400, "Date received must be a valid date.")
+    if "method" in new and new["method"] not in config.METHODS: raise HTTPException(400, "Unknown payment method.")
+    if "taxable" in new and new["taxable"] not in ("Yes", "No", ""): raise HTTPException(400, "Taxable must be Yes, No or blank.")
+    if "customer" in new:
+        new["customer"] = " ".join(new["customer"].upper().split())
+        if not new["customer"]: raise HTTPException(400, "Customer can't be empty.")
+    if "deposit_bank" in new: new["deposit_bank"] = new["deposit_bank"].upper()
+    if "sheet" in new:
+        if not new["sheet"]: raise HTTPException(400, "Choose the payee sheet.")
+        if (before.get("excel") or {}).get("row") and new["sheet"] not in sheets(): raise HTTPException(400, f"Sheet '{new['sheet']}' is not in the workbook.")
+    if "payref" in new and (new.get("method") or old.get("method")) == "check" and "check_no" not in new: new["check_no"] = new["payref"]
+    return {k: v for k, v in new.items() if (old.get(k) or "") != v}
+
 @app.patch("/api/ledger/{pid}")
-def ledger_patch(pid: int, p: LedgerPatch, user=Depends(require_user)):
-    if user["role"] != "admin" and p.deposit_bank is not None: raise HTTPException(403, "You can only change the Taxable field.")
-    if p.taxable not in (None, "Yes", "No", ""): raise HTTPException(400, "Taxable must be Yes, No or blank.")
+def ledger_patch(pid: int, body: dict, user=Depends(require_user)):
     before = db.get_payment(pid)
     if not before or before["status"] != "submitted": raise HTTPException(404, "Payment not found in the ledger.")
-    db.set_ledger(pid, taxable=p.taxable, deposit_bank=(p.deposit_bank.strip().upper() if p.deposit_bank is not None else None))
-    db.audit(user["username"], "ledger_edit", pid, **{k: [before["fields"].get(k), v] for k, v in p.model_dump(exclude_none=True).items()})
-    if before["imported"] and not before.get("excel", {}).get("row"):
-        return dict(ok=True, excel="skipped", message="")
+    ch = _clean_edit(before, body, user)
+    if not ch: return dict(ok=True, changed=[], excel="unchanged", message="")
+    db.set_ledger(pid, **ch)
+    db.audit(user["username"], "ledger_edit", pid, **{k: [before["fields"].get(k, ""), v] for k, v in ch.items()})
+    if "customer" in ch: db.registry().learn(db.get_payment(pid)["fields"])
+    exc = before.get("excel") or {}
+    if not exc.get("row") or not any(k in EXCEL_KEYS for k in ch):
+        if not exc.get("pending"): db.sync_result(pid)          # nothing for Excel (an earlier queued change still waits)
+        return dict(ok=True, changed=sorted(ch), excel="pending" if exc.get("pending") else "skipped", message="")
     left, msg = push_to_excel()
-    return dict(ok=True, excel="pending" if left else "synced", message=msg)
+    after = db.get_payment(pid)
+    pending = bool((after.get("excel") or {}).get("pending"))
+    return dict(ok=True, changed=sorted(ch), excel="pending" if pending else "synced", message=msg if pending else "",
+                sheet=(after.get("excel") or {}).get("sheet"), row=(after.get("excel") or {}).get("row"))
 
 def _sync_loop():
     import time
