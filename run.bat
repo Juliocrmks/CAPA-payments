@@ -12,5 +12,5 @@ if not exist .venv\Scripts\python.exe (
   .venv\Scripts\python -m pip install -r requirements.txt
 )
 echo Starting CheckFlow. Keep this window open while you work. Close it to stop the app.
-.venv\Scripts\python app.py
+.venv\Scripts\python run.py
 pause
