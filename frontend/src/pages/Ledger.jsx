@@ -58,6 +58,7 @@ export default function Ledger({ me }) {
   const isAdmin = me.role === "admin";
   const canTax = isAdmin || me.role === "ar";                 // AR: read, download images, set Taxable
   const canDownload = isAdmin || me.role === "ar";            // read-only: view only
+  const canAttach = isAdmin || me.role === "ar";              // add / remove attachments (never scanned pages)
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [data, setData] = useState(null);
   const [q, setQ] = useState("");
@@ -160,7 +161,7 @@ export default function Ledger({ me }) {
       <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "flex-end" }} spacing={1}>
         <Box sx={{ flex: 1 }}>
           <Typography variant="h1">Ledger <Triangles /></Typography>
-          <Typography color="text.secondary">Every payment received: the ledger is the record, and the payee workbook is kept in step with it. {isAdmin ? "Click a payment to correct it, add attachments or delete it." : canTax ? "Click a payment to see and download its pages; set Taxable here." : "Click a payment to see its pages."}</Typography>
+          <Typography color="text.secondary">Every payment received: the ledger is the record, and the payee workbook is kept in step with it. {isAdmin ? "Click a payment to correct it, add attachments or delete it." : canTax ? "Click a payment to see and download its pages, add attachments, set Taxable." : "Click a payment to see its pages."}</Typography>
         </Box>
         {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
         {isAdmin && <Button startIcon={<DeleteOutlineIcon />} onClick={() => setDeletedOpen(true)}>Deleted</Button>}
@@ -246,7 +247,7 @@ export default function Ledger({ me }) {
           </TableBody>
         </Table>}
       </Paper>
-      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
+      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
         say={say} onChanged={load} onDeleted={() => { setDetail(null); load(); }}
         onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
       {isAdmin && <DeletedDialog open={deletedOpen} onClose={() => setDeletedOpen(false)} onRestored={(m) => { say(m); load(); }} say={say} />}
@@ -322,7 +323,7 @@ function EditField({ label, value, onSave, type = "text", options, help }) {
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setV(value || ""); } }} />);
 }
 
-function DetailDrawer({ r, isAdmin, canTax, canDownload, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
+function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
   const [lb, setLb] = useState(null);
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState(null);
@@ -360,10 +361,10 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, banks, sheets, onClose,
         <IconButton aria-label="Close" onClick={onClose}><CloseIcon /></IconButton>
       </Stack>
       <Stack direction="row" spacing={1} sx={{ mb: 2 }}><SheetChip sheet={r.sheet} /><MethodChip method={f.method} />{r.row && <Chip size="small" variant="outlined" label={`Row ${r.row}`} />}</Stack>
-      <Thumbs pages={r.pages} onOpen={setLb} height={140} max={8} canDownload={canDownload} onRemove={isAdmin ? unattach : undefined} />
-      {(canDownload || isAdmin) && <Stack direction="row" spacing={1} sx={{ mt: 1 }} useFlexGap flexWrap="wrap">
+      <Thumbs pages={r.pages} onOpen={setLb} height={140} max={8} canDownload={canDownload} onRemove={canAttach ? unattach : undefined} />
+      {(canDownload || canAttach) && <Stack direction="row" spacing={1} sx={{ mt: 1 }} useFlexGap flexWrap="wrap">
         {canDownload && r.pages?.length > 0 && <Button size="small" startIcon={<PictureAsPdfIcon />} component="a" href={`/api/payments/${r.id}/document.pdf`}>Download all pages (PDF)</Button>}
-        {isAdmin && <Button size="small" startIcon={<AttachFileIcon />} component="label" disabled={busy}>{busy ? "Attaching…" : "Add attachment"}
+        {canAttach && <Button size="small" startIcon={<AttachFileIcon />} component="label" disabled={busy}>{busy ? "Attaching…" : "Add attachment"}
           <input hidden type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp" onChange={(e) => { attach(e.target.files); e.target.value = ""; }} /></Button>}
       </Stack>}
       <Stack direction="row" spacing={2} sx={{ my: 2 }}>

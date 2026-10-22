@@ -52,7 +52,7 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
    and its old row is emptied, so no rows shift and every `=SUM` stays right.
 
-   **Attachments** (admin): add pages to a sent payment at any time (a 3-page card authorization, a photo of a
+   **Attachments** (admin and AR): add pages to a sent payment at any time (a 3-page card authorization, a photo of a
    paper receipt; PDF or image). They are kept with the payment, viewable and downloadable, never read or processed.
 
    **Delete and restore** (admin): a payment entered wrongly is deleted with a reason. It leaves the ledger, every
@@ -88,7 +88,7 @@ People sign in with their **email**. Three roles:
 | Role | Can |
 |---|---|
 | **Admin** | everything: payments, ledger edits, deletes and attachments, analytics, settings, users |
-| **AR** | ledger and daily totals, view and **download** images, set Taxable, export |
+| **AR** | ledger and daily totals, view and **download** images, add/remove attachments, set Taxable, export |
 | **Read only** | ledger and daily totals, view images (no download), export; no changes |
 
 Roles are enforced by the server, not just hidden in the screen.

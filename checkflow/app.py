@@ -370,7 +370,7 @@ def _attachment_images(data, name):
     return out
 
 @app.post("/api/payments/{pid}/attachments")
-async def add_attachments(pid: int, files: list[UploadFile] = File(...), user=Depends(require_admin)):
+async def add_attachments(pid: int, files: list[UploadFile] = File(...), user=Depends(require_perm("attachments.edit"))):
     """Extra pages for a payment (e.g. the 3 pages of a card payment, a paper receipt). Stored as-is, not read by OCR."""
     if not db.get_payment(pid): raise HTTPException(404)
     page_ids = []
@@ -386,7 +386,7 @@ async def add_attachments(pid: int, files: list[UploadFile] = File(...), user=De
     return db.get_payment(pid)
 
 @app.delete("/api/payments/{pid}/attachments/{page_id}")
-def remove_attachment(pid: int, page_id: int, user=Depends(require_admin)):
+def remove_attachment(pid: int, page_id: int, user=Depends(require_perm("attachments.edit"))):
     img = db.remove_attachment(pid, page_id)
     if not img: raise HTTPException(404, "Only pages added as attachments can be removed.")
     try: os.remove(os.path.join(config.IMAGES, img))

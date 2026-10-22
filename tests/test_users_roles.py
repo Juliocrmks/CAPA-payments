@@ -75,11 +75,16 @@ def test_roles_are_enforced_on_the_server(admin, client):
     # Taxable: AR yes, read-only no; other fields and admin pages: neither
     assert ar.patch(f"/api/ledger/{pid}", json={"taxable": "Yes"}).status_code == 200
     assert ro.patch(f"/api/ledger/{pid}", json={"taxable": "No"}).status_code == 403
+    # attachments: AR can add and remove them (never scanned pages), read-only can't
+    added = ar.post(f"/api/payments/{pid}/attachments", files={"files": ("auth.jpg", jpg(), "image/jpeg")})
+    assert added.status_code == 200 and len(added.json()["pages"]) == 2
+    assert ar.delete(f"/api/payments/{pid}/attachments/{added.json()['pages'][-1]['id']}").status_code == 200
+    assert ro.post(f"/api/payments/{pid}/attachments", files={"files": ("x.jpg", jpg(), "image/jpeg")}).status_code == 403
+    assert ro.delete(f"/api/payments/{pid}/attachments/{page}").status_code == 403
     for c in (ar, ro):
         assert c.patch(f"/api/ledger/{pid}", json={"amount": "1"}).status_code == 403
         assert c.post(f"/api/ledger/{pid}/delete", json={}).status_code == 403
         assert c.get("/api/users").status_code == 403 and c.get("/api/analytics").status_code == 403
-        assert c.post(f"/api/payments/{pid}/attachments", files={"files": ("x.jpg", jpg(), "image/jpeg")}).status_code == 403
 
 def test_last_admin_is_protected(admin):
     me = next(u for u in admin.get("/api/users").json() if u["username"] == "admin")
