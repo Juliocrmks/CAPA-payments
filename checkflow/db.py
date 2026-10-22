@@ -168,7 +168,8 @@ def registry():
 
 # ------------------------------------------------------------------ payments
 KEYS = ["method", "customer", "payee", "sheet", "received", "doc_date", "amount", "ticket", "order", "payref", "check_no",
-        "routing", "account", "bank", "card_brand", "last4", "confirmation", "invoice", "taxable", "taxable_amount", "deposit_bank", "memo", "customer_raw"]
+        "routing", "account", "bank", "card_brand", "last4", "confirmation", "invoice", "taxable", "taxable_amount", "deposit_bank", "memo", "customer_raw",
+        "taxable_by", "taxable_at", "posted", "posted_by", "posted_at"]
 
 def blank_fields():
     return {k: "" for k in KEYS} | {"method": "check"}
@@ -419,6 +420,14 @@ def unlink_rows(path, keep_ids):
             chunk = ids[i:i + 500]; q = ",".join("?" * len(chunk))
             c.execute(f"UPDATE submissions SET row=NULL, excel_fields=NULL, dirty=0, pending_op='', note='' WHERE payment_id IN ({q})", chunk)
         return len(ids)
+
+def payment_history(pid):
+    """Every recorded change to one payment, newest first (who, when, what)."""
+    with conn() as c:
+        rows = c.execute("SELECT ts, username, action, detail FROM audit WHERE payment_id=? ORDER BY id DESC LIMIT 200", (pid,)).fetchall()
+        names = {r["username"]: (r["display_name"] or "") for r in c.execute("SELECT username, display_name FROM users")}
+    return [dict(ts=r["ts"], user=r["username"], name=names.get(r["username"], "") or r["username"], action=r["action"],
+                 detail=json.loads(r["detail"] or "{}")) for r in rows]
 
 # ------------------------------------------------------------------ learned data CRUD
 def learned():

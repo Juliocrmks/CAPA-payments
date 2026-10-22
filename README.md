@@ -53,6 +53,11 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
    and its old row is emptied, so no rows shift and every `=SUM` stays right.
 
+   **Posted** (AR, admin): a checkbox next to Taxable for "entered in NetSuite", with its filter (Posted / Not posted)
+   and grouping. Under Taxable and Posted the ledger shows who set them and when; the payment's side panel has the full
+   **History** (who changed Taxable / Posted, splits, corrections, attachments, delete / restore). The Excel ledger
+   table and the CSV carry Taxable set by / Posted / Posted by / Posted at. Posted isn't written to the workbook.
+
    **Split by invoice** (AR, admin): when one payment pays several invoices (a 10,000 check for invoices of 2,000,
    4,000 and 4,000) and not all are taxable, *Taxable → Split by invoice…* lists each invoice with its amount and
    Taxable yes/no. The invoices must add up to the payment. Taxable becomes *Partial* with the taxable amount; the
@@ -110,7 +115,7 @@ People sign in with their **email**. Three roles:
 | Role | Can |
 |---|---|
 | **Admin** | everything: payments, ledger edits, deletes and attachments, analytics, settings, users |
-| **AR** | ledger and daily totals, view and **download** images, add/remove attachments, set Taxable, export |
+| **AR** | ledger and daily totals, view and **download** images, add/remove attachments, set Taxable and Posted, split by invoice, export |
 | **Read only** | ledger and daily totals, view images (no download), export; no changes |
 
 Roles are enforced by the server, not just hidden in the screen.
@@ -145,7 +150,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (100 tests)
+tests/                     pytest suite (101 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

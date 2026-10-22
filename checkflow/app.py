@@ -787,7 +787,10 @@ def ledger(user=Depends(require_perm("ledger.view"))):
 # Ledger edits: AR may set Taxable; admins may correct any field of a payment already sent to Excel.
 # Every edit takes the same road: saved at once, row queued, written to the workbook now or by the 30 s retry loop.
 EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "taxable_amount", "deposit_bank"]
-EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo"]
+EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo", "posted"]
+
+def _who(user): return user.get("display_name") or user.get("email") or user["username"]
+def _now(): return datetime.datetime.now().isoformat(timespec="seconds")
 WB_OPEN = "The workbook is open in Excel. Your change is saved and will be written automatically once it is closed."
 
 def push_to_excel():
@@ -834,8 +837,9 @@ def _clean_edit(before, body, user):
     unknown = [k for k in body if k not in EDITABLE]
     if unknown: raise HTTPException(400, "These fields can't be edited: " + ", ".join(unknown))
     if user["role"] != "admin":
-        if not can(user, "taxable.edit"): raise HTTPException(403, "Your account can't change payments.")
-        if set(body) - {"taxable"}: raise HTTPException(403, "You can only change the Taxable field.")
+        allowed = {k for k, p in (("taxable", "taxable.edit"), ("posted", "posted.edit")) if can(user, p)}
+        if not allowed: raise HTTPException(403, "Your account can't change payments.")
+        if set(body) - allowed: raise HTTPException(403, "You can only change " + " and ".join(sorted(k.title() for k in allowed)) + ".")
     old = before["fields"]
     new = {k: ("" if v is None else str(v).strip()) for k, v in body.items()}
     if "amount" in new:
@@ -848,6 +852,7 @@ def _clean_edit(before, body, user):
         except ValueError: raise HTTPException(400, "Date received must be a valid date.")
     if "method" in new and new["method"] not in config.METHODS: raise HTTPException(400, "Unknown payment method.")
     if "taxable" in new and new["taxable"] not in ("Yes", "No", ""): raise HTTPException(400, "Taxable must be Yes, No or blank.")
+    if "posted" in new and new["posted"] not in ("Yes", ""): raise HTTPException(400, "Posted must be Yes or blank.")
     if "customer" in new:
         new["customer"] = " ".join(new["customer"].upper().split())
         if not new["customer"]: raise HTTPException(400, "Customer can't be empty.")
@@ -866,13 +871,19 @@ def ledger_patch(pid: int, body: dict, user=Depends(require_user)):
     if "taxable" in body and before["fields"].get("invoices"):     # a plain Yes / No / blank replaces an invoice split
         ch.update(taxable=body["taxable"] or "", invoices=[], taxable_amount="")
     if not ch: return dict(ok=True, changed=[], excel="unchanged", message="")
+    if "taxable" in ch: ch.update(taxable_by=_who(user), taxable_at=_now())   # who set Taxable / Posted (and when) shows in the ledger
+    if "posted" in ch: ch.update(posted_by=_who(user), posted_at=_now())
     db.set_ledger(pid, **ch)
-    db.audit(user["username"], "ledger_edit", pid, **{k: [before["fields"].get(k, ""), v] for k, v in ch.items()})
+    db.audit(user["username"], "ledger_edit", pid, **{k: [before["fields"].get(k, ""), v] for k, v in ch.items()
+                                                       if k not in ("taxable_by", "taxable_at", "posted_by", "posted_at", "invoices")})
     if "customer" in ch: db.registry().learn(db.get_payment(pid)["fields"])
     return _excel_after_edit(pid, before, ch)
 
 def _excel_after_edit(pid, before, ch):
     exc = before.get("excel") or {}
+    if not any(k in EXCEL_KEYS for k in ch):                     # e.g. Posted: nothing for Excel
+        if not exc.get("pending"): db.sync_result(pid)           # (an earlier queued change still waits)
+        return dict(ok=True, changed=sorted(ch), excel="pending" if exc.get("pending") else "unchanged", message="")
     if not exc.get("row") or not any(k in EXCEL_KEYS for k in ch):
         if not exc.get("pending"): db.sync_result(pid)          # nothing for Excel (an earlier queued change still waits)
         return dict(ok=True, changed=sorted(ch), excel="pending" if exc.get("pending") else "skipped", message="")
@@ -929,9 +940,15 @@ def ledger_invoices(pid: int, s: InvoiceSplit, user=Depends(require_perm("taxabl
                   invoice=", ".join(l["invoice"] for l in lines))
     else:                                                          # remove the split; Taxable goes back to not set
         ch = dict(invoices=[], taxable="", taxable_amount="")
+    ch.update(taxable_by=_who(user), taxable_at=_now())
     db.set_ledger(pid, **ch)
     db.audit(user["username"], "invoice_split", pid, invoices=len(lines), taxable=ch["taxable"], taxable_amount=ch["taxable_amount"])
     return _excel_after_edit(pid, before, ch)
+
+@app.get("/api/ledger/{pid}/history")
+def ledger_history(pid: int, _=Depends(require_perm("ledger.view"))):
+    """Who did what to this payment: sent, Taxable, invoice split, Posted, corrections, attachments, delete / restore."""
+    return db.payment_history(pid)
 
 class LedgerDelete(BaseModel):
     reason: str = ""
@@ -974,7 +991,8 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     meth = {"check": "Check", "cash": "Cash", "card": "Credit card", "ach": "ACH", "wire": "Wire"}
     wb = Workbook(); ws = wb.active; ws.title = "Ledger"
     head = ["Received", "Customer", "Payee", "Method", "Ticket ref", "Payment ref", "Order #", "Amount", "Taxable", "Taxable amount",
-            "Not taxable amount", "Deposit bank", "Check #", "Bank (drawn on)", "Invoice", "Invoice split", "Pages", "Excel row"]
+            "Not taxable amount", "Deposit bank", "Check #", "Bank (drawn on)", "Invoice", "Invoice split", "Pages", "Excel row",
+            "Taxable set by", "Taxable set at", "Posted to NetSuite", "Posted by", "Posted at"]
     ws.append(head)
     for x in rows:
         f = x["fields"]
@@ -984,7 +1002,9 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
         ws.append([f.get("received"), f.get("customer"), x.get("sheet"), meth.get(f.get("method"), f.get("method")), f.get("ticket"), f.get("payref"),
                    f.get("order"), num(f.get("amount")), f.get("taxable"), round(tx, 2) if f.get("taxable") else None,
                    round(ntx, 2) if f.get("taxable") else None, f.get("deposit_bank"), f.get("check_no"), f.get("bank"), f.get("invoice"), split,
-                   len(x.get("pages") or []), x.get("row")])
+                   len(x.get("pages") or []), x.get("row"), f.get("taxable_by"), f.get("taxable_at"),
+                   "Yes" if f.get("posted") == "Yes" else "", f.get("posted_by") if f.get("posted") == "Yes" else "",
+                   f.get("posted_at") if f.get("posted") == "Yes" else ""])
     n = len(rows) + 1
     ws.append(["Total", "", "", "", "", "", "", f"=SUBTOTAL(9,H2:H{n})", "", f"=SUBTOTAL(9,J2:J{n})", f"=SUBTOTAL(9,K2:K{n})"])
     bold, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="381F12")
@@ -993,8 +1013,9 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     for row in ws.iter_rows(min_row=2, min_col=8, max_col=11):
         for c in row:
             if c.column != 9: c.number_format = "#,##0.00"
-    for col, w in zip("ABCDEFGHIJKLMNOPQR", (12, 34, 9, 12, 11, 14, 11, 14, 9, 14, 16, 13, 11, 22, 16, 40, 7, 9)): ws.column_dimensions[col].width = w
-    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:R{n}"
+    for col, w in zip("ABCDEFGHIJKLMNOPQRSTUVW", (12, 34, 9, 12, 11, 14, 11, 14, 9, 14, 16, 13, 11, 22, 16, 40, 7, 9, 22, 19, 10, 22, 19)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:W{n}"
     # daily totals per deposit bank (the cashier's view)
     t = wb.create_sheet("Daily bank totals")
     t.append(["Day", "Deposit bank", "Payments", "Cash", "Checks", "Card / ACH / wire", "Total", "Taxable", "Not taxable", "Taxable not set"])

@@ -223,7 +223,7 @@ function SignIn({ draft, set, save, say }) {
 }
 
 const ROLES = [["admin", "Admin", "Everything: payments, ledger edits and deletes, attachments, analytics, settings, users"],
-  ["ar", "AR", "Ledger and daily totals, view and download images, add attachments, set Taxable"],
+  ["ar", "AR", "Ledger and daily totals, view and download images, add attachments, set Taxable and Posted"],
   ["readonly", "Read only", "Ledger and daily totals, view images (no download), no changes"]];
 const roleName = (r) => (ROLES.find(([k]) => k === r) || [r, r])[1];
 

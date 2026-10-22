@@ -23,9 +23,9 @@ import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } fr
 
 const PERIODS = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["quarter", "This quarter"], ["year", "This year"], ["all", "All time"]];
 const GROUPS = [["day", "Day received"], ["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["customer", "Company"], ["sheet", "Payee sheet"],
-  ["method", "Payment method"], ["deposit_bank", "Deposit bank"], ["taxable", "Taxable"], ["none", "No grouping"]];
+  ["method", "Payment method"], ["deposit_bank", "Deposit bank"], ["taxable", "Taxable"], ["posted", "Posted to NetSuite"], ["none", "No grouping"]];
 const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["ticket", "Ticket ref"],
-  ["payref", "Payment ref"], ["order", "Order #"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
+  ["payref", "Payment ref"], ["order", "Order #"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
 
 const iso = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
 const parse = (s) => { const [y, m, d] = (s || "").split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
@@ -51,6 +51,7 @@ function groupKey(r, g) {
     case "method": return [f.method, METHODS[f.method] || f.method];
     case "deposit_bank": return [f.deposit_bank || "", f.deposit_bank || "No deposit bank"];
     case "taxable": return [f.taxable || "~", f.taxable === "Yes" ? "Taxable" : f.taxable === "No" ? "Not taxable" : f.taxable === "Partial" ? "Partly taxable (split by invoice)" : "Taxable not set"];
+    case "posted": return [f.posted === "Yes" ? "1" : "0", f.posted === "Yes" ? "Posted to NetSuite" : "Not posted yet"];
     default: return ["all", "All payments"];
   }
 }
@@ -61,6 +62,7 @@ export default function Ledger({ me }) {
   const isAdmin = me.role === "admin";
   const canTax = isAdmin || me.role === "ar";                 // AR: read, download images, set Taxable
   const canDownload = isAdmin || me.role === "ar";            // read-only: view only
+  const canPost = isAdmin || (me.perms || []).includes("posted.edit");   // AR marks payments posted in NetSuite
   const canAttach = isAdmin || me.role === "ar";              // add / remove attachments (never scanned pages)
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -73,6 +75,7 @@ export default function Ledger({ me }) {
   const [sheets, setSheets] = useState([]);
   const [methods, setMethods] = useState([]);
   const [tax, setTax] = useState("any");
+  const [posted, setPosted] = useState("any");
   const [onlyPending, setOnlyPending] = useState(false);
   const [group, setGroup] = useState("day");
   const [importing, setImporting] = useState(false);
@@ -103,12 +106,14 @@ export default function Ledger({ me }) {
       if (tax === "yes" && f.taxable !== "Yes" && f.taxable !== "Partial") return false;
       if (tax === "no" && f.taxable !== "No" && f.taxable !== "Partial") return false;
       if (tax === "unset" && f.taxable) return false;
+      if (posted === "yes" && f.posted !== "Yes") return false;
+      if (posted === "no" && f.posted === "Yes") return false;
       if (onlyPending && !r.pending) return false;
       if (!needle) return true;
       return [f.customer, r.sheet, f.ticket, f.payref, f.check_no, f.order, f.amount, money(f.amount), f.deposit_bank, f.bank, f.confirmation,
         f.invoice, f.last4, METHODS[f.method], fdate(d), f.memo].join(" ").toLowerCase().includes(needle);
     });
-  }, [data, q, from, to, sheets, methods, tax, onlyPending]);
+  }, [data, q, from, to, sheets, methods, tax, posted, onlyPending]);
 
   const groups = useMemo(() => {
     const m = new Map();
@@ -138,7 +143,8 @@ export default function Ledger({ me }) {
     setData((d) => ({ ...d, rows: d.rows.map(patch(v)) }));
     try {
       const res = await api.patch(`/api/ledger/${r.id}`, { [k]: v });
-      if (res.excel !== "unchanged") say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved in CheckFlow (this row isn't in the workbook)." : "Saved and updated in Excel.",
+      if (k === "posted") say(v ? "Marked as posted in NetSuite." : "Marked as not posted.");
+      else if (res.excel !== "unchanged") say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved in CheckFlow (this row isn't in the workbook)." : "Saved and updated in Excel.",
         res.excel === "pending" ? "warning" : "success");
       load();
       return true;
@@ -150,9 +156,9 @@ export default function Ledger({ me }) {
   };
 
   const exportCsv = () => {
-    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Taxable amount", "Deposit bank", "Check date", "Bank", "Invoice", "Excel row"];
+    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Taxable amount", "Deposit bank", "Check date", "Bank", "Invoice", "Excel row", "Taxable set by", "Posted", "Posted by"];
     const lines = [head].concat(groups.flatMap((g) => g.rows).map((r) => { const f = r.fields;
-      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.taxable ? taxParts(f).tax.toFixed(2) : "", f.deposit_bank, f.doc_date, f.bank, f.invoice, r.row]; }));
+      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.taxable ? taxParts(f).tax.toFixed(2) : "", f.deposit_bank, f.doc_date, f.bank, f.invoice, r.row, f.taxable_by, f.posted === "Yes" ? "Yes" : "", f.posted === "Yes" ? f.posted_by : ""]; }));
     const csv = lines.map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `checkflow-ledger-${todayIso()}.csv`; a.click();
@@ -220,8 +226,11 @@ export default function Ledger({ me }) {
             <ToggleButtonGroup size="small" exclusive value={tax} onChange={(_, v) => v && setTax(v)}>
               <ToggleButton value="any">Any</ToggleButton><ToggleButton value="yes">Taxable</ToggleButton><ToggleButton value="no">Not taxable</ToggleButton><ToggleButton value="unset">Not set</ToggleButton>
             </ToggleButtonGroup>
+            <ToggleButtonGroup size="small" exclusive value={posted} onChange={(_, v) => v && setPosted(v)} aria-label="Posted to NetSuite">
+              <ToggleButton value="any">Any</ToggleButton><ToggleButton value="yes">Posted</ToggleButton><ToggleButton value="no">Not posted</ToggleButton>
+            </ToggleButtonGroup>
             {pendingCount > 0 && <Chip label="Excel pending" clickable color={onlyPending ? "warning" : "default"} variant={onlyPending ? "filled" : "outlined"} onClick={() => setOnlyPending(!onlyPending)} />}
-            {(sheets.length || methods.length || tax !== "any" || onlyPending || q) ? <Button size="small" onClick={() => { setSheets([]); setMethods([]); setTax("any"); setOnlyPending(false); setQ(""); }}>Clear filters</Button> : null}
+            {(sheets.length || methods.length || tax !== "any" || posted !== "any" || onlyPending || q) ? <Button size="small" onClick={() => { setSheets([]); setMethods([]); setTax("any"); setPosted("any"); setOnlyPending(false); setQ(""); }}>Clear filters</Button> : null}
           </Stack>
         </Stack>
       </Paper>
@@ -249,7 +258,7 @@ export default function Ledger({ me }) {
                     <TableCell align="right"><b>{money(sub)}</b></TableCell>
                     <TableCell colSpan={3} />
                   </TableRow>),
-                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} onSplit={setSplitFor} />)),
+                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} canPost={canPost} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} onSplit={setSplitFor} />)),
                 !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={12} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
               ];
             })}
@@ -259,7 +268,7 @@ export default function Ledger({ me }) {
           </TableBody>
         </Table>}
       </Paper>
-      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)} onSplit={setSplitFor}
+      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canPost={canPost} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)} onSplit={setSplitFor}
         say={say} onChanged={load} onDeleted={() => { setDetail(null); load(); }}
         onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
       {canTax && splitFor && <InvoiceSplitDialog r={splitFor} onClose={() => setSplitFor(null)} onSaved={(m) => { setSplitFor(null); say(m); load(); }} />}
@@ -269,6 +278,68 @@ export default function Ledger({ me }) {
         onDone={(m, keepOpen) => { if (!keepOpen) { setImporting(false); setPeriod("all"); } say(m); load(); }} />}
       {toast}
     </Stack>
+  );
+}
+
+const shortWhen = (at) => at ? new Date(at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+
+function ByLine({ name, at }) {      // who set it, and when, under the control
+  if (!name) return null;
+  return (
+    <Box title={`${name} · ${shortWhen(at)}`} sx={{ mt: .25, maxWidth: 170, lineHeight: 1.25 }}>
+      <Typography variant="caption" color="text.secondary" display="block" noWrap sx={{ lineHeight: 1.25 }}>{name.split("@")[0]}</Typography>
+      <Typography variant="caption" color="text.secondary" display="block" noWrap sx={{ lineHeight: 1.25, fontSize: 11 }}>{shortWhen(at)}</Typography>
+    </Box>);
+}
+
+function PostedBox({ r, canPost, onEdit, label }) {
+  const on = r.fields.posted === "Yes";
+  if (!canPost) return <Typography variant="body2" color={on ? "success.main" : "text.secondary"}>{on ? "Posted" : "Not posted"}</Typography>;
+  return <FormControlLabel sx={{ m: 0 }} label={label ? (on ? "Posted" : "Not posted") : ""}
+    control={<Checkbox size="small" checked={on} onChange={(e) => onEdit(r, "posted", e.target.checked ? "Yes" : "")}
+      inputProps={{ "aria-label": "Posted to NetSuite" }} sx={{ p: .5 }} color="success" />} />;
+}
+
+const FIELD_NAMES = { taxable: "Taxable", posted: "Posted", amount: "Amount", customer: "Customer", received: "Date received", sheet: "Payee sheet",
+  method: "Method", ticket: "Ticket ref", payref: "Payment ref", order: "Order #", deposit_bank: "Deposit bank", invoice: "Invoice", taxable_amount: "Taxable amount",
+  check_no: "Check #", bank: "Bank", memo: "Memo", confirmation: "Confirmation" };
+const show = (k, v) => k === "posted" ? (v === "Yes" ? "posted" : "not posted") : k === "amount" || k === "taxable_amount" ? (v ? money(v) : "—") : (v || "not set");
+function historyText(h) {
+  const d = h.detail || {};
+  switch (h.action) {
+    case "ledger_edit": return Object.entries(d).map(([k, [a, b]]) => k === "posted" ? (b === "Yes" ? "Marked posted in NetSuite" : "Marked not posted")
+      : `${FIELD_NAMES[k] || k}: ${show(k, a)} → ${show(k, b)}`).join(" · ");
+    case "invoice_split": return d.invoices ? `Split by invoice (${d.invoices} invoices, ${d.taxable === "Partial" ? `${money(d.taxable_amount)} taxable` : `taxable ${d.taxable || "not set"}`})` : "Removed the invoice split";
+    case "attachment_added": return `Added ${d.pages || ""} attachment page${d.pages === 1 ? "" : "s"}`;
+    case "attachment_removed": return "Removed an attachment";
+    case "ledger_deleted": return `Deleted${d.reason ? `: ${d.reason}` : ""}`;
+    case "ledger_restored": return "Restored";
+    case "pdf_downloaded": return "Downloaded the pages (PDF)";
+    case "payment_added": return "Added by hand";
+    case "status_validated": return "Validated (checked against the scan)";
+    case "status_pending": return "Set to pending";
+    case "status_review": return "Back to review";
+    default: return h.action.replace(/_/g, " ");
+  }
+}
+
+function PaymentHistory({ r }) {
+  const [h, setH] = useState(null);
+  const key = JSON.stringify([r.id, r.fields.taxable, r.fields.posted, r.fields.amount, r.fields.taxable_amount, r.pages?.length]);
+  useEffect(() => { api.get(`/api/ledger/${r.id}/history`).then(setH).catch(() => setH([])); }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (!h) return null;
+  const items = h.filter((x) => x.action !== "image_downloaded");
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="subtitle2" sx={{ mb: .5 }}>History</Typography>
+      <Stack spacing={.75}>
+        {items.map((x, i) => (
+          <Box key={i}><Typography variant="body2">{historyText(x)}</Typography>
+            <Typography variant="caption" color="text.secondary">{x.name} · {shortWhen(x.ts)}</Typography></Box>))}
+        <Box><Typography variant="body2">Sent to Excel</Typography>
+          <Typography variant="caption" color="text.secondary">{r.submitted_by || "?"} · {shortWhen(r.submitted_at)}</Typography></Box>
+      </Stack>
+    </Box>
   );
 }
 
@@ -375,7 +446,7 @@ function BankSelect({ r, banks, onEdit }) {
   );
 }
 
-function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen, onSplit }) {
+function LedgerRow({ r, isAdmin, canTax, canPost, banks, onEdit, onOpen, onSplit }) {
   const f = r.fields;
   return (
     <TableRow hover onClick={onOpen} sx={{ cursor: "pointer" }}>
@@ -396,7 +467,11 @@ function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen, onSplit }) {
       <TableCell>{f.payref || (f.method === "wire" ? fdate(f.received, { month: "short", day: "numeric" }) : "")}</TableCell>
       <TableCell>{f.order}</TableCell>
       <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}</TableCell>
-      <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}</TableCell>
+      <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}<ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></TableCell>
+      <TableCell onClick={(e) => e.stopPropagation()} sx={{ whiteSpace: "nowrap" }}>
+        <PostedBox r={r} canPost={canPost} onEdit={onEdit} />
+        <ByLine name={f.posted === "Yes" && f.posted_by} at={f.posted_at} />
+      </TableCell>
       <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
         {r.pending ? <Tooltip title={r.note || "Waiting for the workbook to be closed"}><Chip size="small" label="pending" sx={{ bgcolor: warnBg, color: "#8a5300" }} /></Tooltip> : r.row}
@@ -424,7 +499,7 @@ function EditField({ label, value, onSave, type = "text", options, help }) {
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setV(value || ""); } }} />);
 }
 
-function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, onSplit, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
+function DetailDrawer({ r, isAdmin, canTax, canPost, canDownload, canAttach, onSplit, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
   const [lb, setLb] = useState(null);
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState(null);
@@ -469,7 +544,10 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, onSplit, ban
           <input hidden type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp" onChange={(e) => { attach(e.target.files); e.target.value = ""; }} /></Button>}
       </Stack>}
       <Stack direction="row" spacing={2} sx={{ my: 2 }}>
-        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : <Typography>{taxText(f)}</Typography>}</Box>
+        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : <Typography>{taxText(f)}</Typography>}
+          <ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></Box>
+        <Box><Typography variant="caption" color="text.secondary" display="block">Posted to NetSuite</Typography><PostedBox r={r} canPost={canPost} onEdit={onEdit} label />
+          <ByLine name={f.posted === "Yes" && f.posted_by} at={f.posted_at} /></Box>
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
       </Stack>
       {f.invoices?.length > 0 && <InvoiceTable f={f} onEditSplit={canTax ? () => onSplit(r) : null} />}
@@ -494,6 +572,7 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, onSplit, ban
       </>}
       <Divider sx={{ mb: 1 }} />
       <Table size="small"><TableBody>{readOnly.map(([k, v]) => <TableRow key={k}><TableCell sx={{ color: "text.secondary", width: 150, border: 0 }}>{k}</TableCell><TableCell sx={{ border: 0 }}>{v}</TableCell></TableRow>)}</TableBody></Table>
+      <PaymentHistory r={r} />
       {isAdmin && <Box sx={{ mt: 3 }}><Button color="error" startIcon={<DeleteOutlineIcon />} onClick={() => setDel("")}>Delete this payment</Button></Box>}
       {lb !== null && <Lightbox pages={r.pages} index={lb} onClose={() => setLb(null)} canDownload={canDownload} />}
       <Dialog open={del !== null} onClose={() => setDel(null)} maxWidth="xs" fullWidth>

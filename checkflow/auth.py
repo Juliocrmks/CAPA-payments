@@ -16,10 +16,10 @@ from . import db
 COOKIE, TTL = "cf_session", 12 * 3600
 _fails = {}
 
-ROLES = {"admin": "Admin", "ar": "AR: read, download images, attachments, set Taxable", "readonly": "Read only"}
+ROLES = {"admin": "Admin", "ar": "AR: read, download images, attachments, set Taxable and Posted", "readonly": "Read only"}
 PERMS = {
     "admin": {"*"},
-    "ar": {"ledger.view", "images.view", "images.download", "attachments.edit", "taxable.edit", "export"},
+    "ar": {"ledger.view", "images.view", "images.download", "attachments.edit", "taxable.edit", "posted.edit", "export"},
     "readonly": {"ledger.view", "images.view", "export"},
 }
 
