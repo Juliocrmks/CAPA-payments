@@ -14,6 +14,7 @@ const Analytics = lazy(() => import("./pages/Analytics"));     // charts load on
 
 const ADMIN_TABS = [["inbox", "Payments"], ["ledger", "Ledger"], ["analytics", "Analytics"], ["learned", "Learned data"], ["settings", "Settings"]];
 const AR_TABS = [["ledger", "Ledger"]];
+export const ROLE_LABEL = { admin: "Admin", ar: "AR · images and Taxable", readonly: "Read only" };
 
 function useHashRoute(def) {
   const read = () => (window.location.hash.replace(/^#\/?/, "") || def);
@@ -54,17 +55,13 @@ export default function App() {
             {me.display_name || me.username}
           </Button>
           <Menu anchorEl={menu} open={!!menu} onClose={() => setMenu(null)}>
-            <MenuItem disabled><Typography variant="body2">{me.role === "admin" ? "Admin" : "Accounts receivable"} · {me.source === "ldap" ? "company account" : "local account"}</Typography></MenuItem>
+            <MenuItem disabled><Typography variant="body2">{me.email || me.username} · {ROLE_LABEL[me.role] || me.role}</Typography></MenuItem>
             {me.source === "local" && <MenuItem onClick={() => { setMenu(null); setPwOpen(true); }}><ListItemIcon><KeyIcon fontSize="small" /></ListItemIcon>Change password</MenuItem>}
             <MenuItem onClick={async () => { await api.post("/api/logout"); setMe(null); }}><ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>Sign out</MenuItem>
           </Menu>
         </Toolbar>
       </AppBar>
-      {me.must_change && (
-        <Alert severity="warning" action={<Button color="inherit" size="small" onClick={() => setPwOpen(true)}>Change password</Button>} sx={{ borderRadius: 0 }}>
-          You're signed in with the default admin password. Change it before other people use CheckFlow on the network.
-        </Alert>
-      )}
+      <PasswordDialog open={me.must_change && me.source === "local"} forced onClose={() => {}} onDone={load} />
       <Box component="main" sx={{ flex: 1, width: "100%", maxWidth: ["ledger", "inbox", "analytics"].includes(current) ? 1680 : 1320, mx: "auto", px: { xs: 1.5, md: 3 }, py: 3 }}>
         {current === "inbox" && <Inbox />}
         {current === "ledger" && <Ledger me={me} />}
@@ -77,23 +74,28 @@ export default function App() {
   );
 }
 
-function PasswordDialog({ open, onClose, onDone }) {
+function PasswordDialog({ open, onClose, onDone, forced }) {
   const [cur, setCur] = useState(""); const [n1, setN1] = useState(""); const [n2, setN2] = useState(""); const [err, setErr] = useState("");
   useEffect(() => { if (open) { setCur(""); setN1(""); setN2(""); setErr(""); } }, [open]);
   const save = async () => {
+    if (!n1) return setErr("Enter a new password.");
     if (n1 !== n2) return setErr("The new passwords don't match.");
     try { await api.post("/api/me/password", { current: cur, new: n1 }); onDone(); } catch (e) { setErr(e.message); }
   };
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Change password</DialogTitle>
+    <Dialog open={open} onClose={forced ? undefined : onClose} maxWidth="xs" fullWidth disableEscapeKeyDown={forced}>
+      <DialogTitle>{forced ? "Choose your password" : "Change password"}</DialogTitle>
       <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-        <TextField type="password" label="Current password" value={cur} onChange={(e) => setCur(e.target.value)} autoFocus />
-        <TextField type="password" label="New password (6+ characters)" value={n1} onChange={(e) => setN1(e.target.value)} />
+        {forced && <Alert severity="info">You signed in with a temporary password. Choose your own to continue.</Alert>}
+        <TextField type="password" label={forced ? "Temporary password" : "Current password"} value={cur} onChange={(e) => setCur(e.target.value)} autoFocus />
+        <TextField type="password" label="New password" value={n1} onChange={(e) => setN1(e.target.value)} />
         <TextField type="password" label="Repeat new password" value={n2} onChange={(e) => setN2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
         {err && <Alert severity="error">{err}</Alert>}
       </Stack></DialogContent>
-      <DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" onClick={save}>Change password</Button></DialogActions>
+      <DialogActions>
+        {forced ? <Button onClick={async () => { await api.post("/api/logout"); window.location.reload(); }}>Sign out</Button> : <Button onClick={onClose}>Cancel</Button>}
+        <Button variant="contained" onClick={save}>{forced ? "Save and continue" : "Change password"}</Button>
+      </DialogActions>
     </Dialog>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Paper, Stack, Typography, TextField, MenuItem, Chip, Table, TableHead, TableBody, TableRow, TableCell, TableSortLabel,
+import { Box, Paper, Stack, Typography, TextField, MenuItem, Chip, Table, TableHead, TableBody, TableRow, TableCell, TableSortLabel, Dialog, DialogTitle, DialogContent, DialogActions,
   IconButton, Button, InputAdornment, Drawer, Divider, Tooltip, Select, ToggleButtonGroup, ToggleButton, Alert, CircularProgress } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -8,9 +8,13 @@ import DownloadIcon from "@mui/icons-material/Download";
 import CloseIcon from "@mui/icons-material/Close";
 import SyncProblemIcon from "@mui/icons-material/SyncProblem";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import RestoreIcon from "@mui/icons-material/Restore";
+import AttachFileIcon from "@mui/icons-material/AttachFile";
+import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ImportExcelDialog from "../components/ImportExcelDialog";
 import DayBankTotals from "../components/DayBankTotals";
-import { api, money, num, fdate, METHODS, todayIso } from "../api";
+import { api, money, num, fdate, METHODS, todayIso, downloadPost } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
 
@@ -52,6 +56,9 @@ const sortVal = (r, k) => k === "amount" ? num(r.fields.amount) : k === "row" ? 
 
 export default function Ledger({ me }) {
   const isAdmin = me.role === "admin";
+  const canTax = isAdmin || me.role === "ar";                 // AR: read, download images, set Taxable
+  const canDownload = isAdmin || me.role === "ar";            // read-only: view only
+  const [deletedOpen, setDeletedOpen] = useState(false);
   const [data, setData] = useState(null);
   const [q, setQ] = useState("");
   const [period, setPeriod] = useState("month");
@@ -153,10 +160,13 @@ export default function Ledger({ me }) {
       <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "flex-end" }} spacing={1}>
         <Box sx={{ flex: 1 }}>
           <Typography variant="h1">Ledger <Triangles /></Typography>
-          <Typography color="text.secondary">Every payment sent to the payee sheets. {isAdmin ? "Click a payment to correct any of its details" : "Taxable can be changed here"}; Excel follows.</Typography>
+          <Typography color="text.secondary">Every payment received: the ledger is the record, and the payee workbook is kept in step with it. {isAdmin ? "Click a payment to correct it, add attachments or delete it." : canTax ? "Click a payment to see and download its pages; set Taxable here." : "Click a payment to see its pages."}</Typography>
         </Box>
         {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
-        <Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>Export CSV</Button>
+        {isAdmin && <Button startIcon={<DeleteOutlineIcon />} onClick={() => setDeletedOpen(true)}>Deleted</Button>}
+        <Button startIcon={<DownloadIcon />} disabled={!rows.length}
+          onClick={() => downloadPost("/api/ledger/export", { ids: groups.flatMap((g) => g.rows).map((r) => r.id) }, "checkflow-ledger.xlsx").catch((e) => say(e.message, "error"))}>Export Excel</Button>
+        <Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>CSV</Button>
       </Stack>
 
       {pendingCount > 0 && <Alert severity="warning" icon={<SyncProblemIcon />}>{pendingCount} change{pendingCount > 1 ? "s are" : " is"} waiting to be written to Excel. Close the workbook and they'll go through within 30 seconds.</Alert>}
@@ -226,7 +236,7 @@ export default function Ledger({ me }) {
                     <TableCell align="right"><b>{money(sub)}</b></TableCell>
                     <TableCell colSpan={3} />
                   </TableRow>),
-                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} />)),
+                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} />)),
                 !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={12} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
               ];
             })}
@@ -236,8 +246,10 @@ export default function Ledger({ me }) {
           </TableBody>
         </Table>}
       </Paper>
-      <DetailDrawer r={detail} isAdmin={isAdmin} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
+      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
+        say={say} onChanged={load} onDeleted={() => { setDetail(null); load(); }}
         onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
+      {isAdmin && <DeletedDialog open={deletedOpen} onClose={() => setDeletedOpen(false)} onRestored={(m) => { say(m); load(); }} say={say} />}
       {isAdmin && <ImportExcelDialog open={importing} onClose={() => setImporting(false)}
         onDone={(m, keepOpen) => { if (!keepOpen) { setImporting(false); setPeriod("all"); } say(m); load(); }} />}
       {toast}
@@ -266,7 +278,7 @@ function BankSelect({ r, banks, onEdit }) {
   );
 }
 
-function LedgerRow({ r, isAdmin, banks, onEdit, onOpen }) {
+function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen }) {
   const f = r.fields;
   return (
     <TableRow hover onClick={onOpen} sx={{ cursor: "pointer" }}>
@@ -282,7 +294,7 @@ function LedgerRow({ r, isAdmin, banks, onEdit, onOpen }) {
       <TableCell>{f.payref || (f.method === "wire" ? fdate(f.received, { month: "short", day: "numeric" }) : "")}</TableCell>
       <TableCell>{f.order}</TableCell>
       <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}</TableCell>
-      <TableCell><TaxSelect r={r} onEdit={onEdit} /></TableCell>
+      <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} /> : (f.taxable || "Not set")}</TableCell>
       <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
         {r.pending ? <Tooltip title={r.note || "Waiting for the workbook to be closed"}><Chip size="small" label="pending" sx={{ bgcolor: warnBg, color: "#8a5300" }} /></Tooltip> : r.row}
@@ -310,9 +322,29 @@ function EditField({ label, value, onSave, type = "text", options, help }) {
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setV(value || ""); } }} />);
 }
 
-function DetailDrawer({ r, isAdmin, banks, sheets, onClose, onEdit }) {
+function DetailDrawer({ r, isAdmin, canTax, canDownload, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
   const [lb, setLb] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [del, setDel] = useState(null);
   if (!r) return null;
+  const attach = async (list) => {
+    const files = [...(list || [])];   // copy: the input is cleared right after, which empties the live FileList
+    if (!files.length) return;
+    const fd = new FormData(); files.forEach((x) => fd.append("files", x));
+    setBusy(true);
+    try { await api.upload(`/api/payments/${r.id}/attachments`, fd); say(`${files.length} file${files.length > 1 ? "s" : ""} attached.`); onChanged(); }
+    catch (e) { say(e.message, "error"); } finally { setBusy(false); }
+  };
+  const unattach = async (p) => {
+    if (!window.confirm("Remove this attachment?")) return;
+    try { await api.del(`/api/payments/${r.id}/attachments/${p.id}`); onChanged(); } catch (e) { say(e.message, "error"); }
+  };
+  const remove = async () => {
+    try { const res = await api.post(`/api/ledger/${r.id}/delete`, { reason: del || "" });
+      say(res.excel === "pending" ? "Moved to Deleted. Its workbook row is removed once the workbook is closed." : "Moved to Deleted and removed from the workbook.", res.excel === "pending" ? "warning" : "success");
+      setDel(null); onDeleted(); }
+    catch (e) { say(e.message, "error"); }
+  };
   const f = r.fields;
   const save = (k) => (v) => onEdit(r, k, v);
   const info = [["Received", fdate(f.received)], ["Customer", f.customer], ["Method", METHODS[f.method]], ["Amount", money(f.amount)], ["Ticket ref", f.ticket],
@@ -328,9 +360,14 @@ function DetailDrawer({ r, isAdmin, banks, sheets, onClose, onEdit }) {
         <IconButton aria-label="Close" onClick={onClose}><CloseIcon /></IconButton>
       </Stack>
       <Stack direction="row" spacing={1} sx={{ mb: 2 }}><SheetChip sheet={r.sheet} /><MethodChip method={f.method} />{r.row && <Chip size="small" variant="outlined" label={`Row ${r.row}`} />}</Stack>
-      <Thumbs pages={r.pages} onOpen={setLb} height={140} max={4} />
+      <Thumbs pages={r.pages} onOpen={setLb} height={140} max={8} canDownload={canDownload} onRemove={isAdmin ? unattach : undefined} />
+      {(canDownload || isAdmin) && <Stack direction="row" spacing={1} sx={{ mt: 1 }} useFlexGap flexWrap="wrap">
+        {canDownload && r.pages?.length > 0 && <Button size="small" startIcon={<PictureAsPdfIcon />} component="a" href={`/api/payments/${r.id}/document.pdf`}>Download all pages (PDF)</Button>}
+        {isAdmin && <Button size="small" startIcon={<AttachFileIcon />} component="label" disabled={busy}>{busy ? "Attaching…" : "Add attachment"}
+          <input hidden type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp" onChange={(e) => { attach(e.target.files); e.target.value = ""; }} /></Button>}
+      </Stack>}
       <Stack direction="row" spacing={2} sx={{ my: 2 }}>
-        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography><TaxSelect r={r} onEdit={onEdit} /></Box>
+        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} /> : <Typography>{f.taxable || "Not set"}</Typography>}</Box>
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
       </Stack>
       {r.pending && <Alert severity="warning" sx={{ mb: 2 }}>{r.note || "Waiting to be written to Excel."}</Alert>}
@@ -354,7 +391,49 @@ function DetailDrawer({ r, isAdmin, banks, sheets, onClose, onEdit }) {
       </>}
       <Divider sx={{ mb: 1 }} />
       <Table size="small"><TableBody>{readOnly.map(([k, v]) => <TableRow key={k}><TableCell sx={{ color: "text.secondary", width: 150, border: 0 }}>{k}</TableCell><TableCell sx={{ border: 0 }}>{v}</TableCell></TableRow>)}</TableBody></Table>
-      {lb !== null && <Lightbox pages={r.pages} index={lb} onClose={() => setLb(null)} />}
+      {isAdmin && <Box sx={{ mt: 3 }}><Button color="error" startIcon={<DeleteOutlineIcon />} onClick={() => setDel("")}>Delete this payment</Button></Box>}
+      {lb !== null && <Lightbox pages={r.pages} index={lb} onClose={() => setLb(null)} canDownload={canDownload} />}
+      <Dialog open={del !== null} onClose={() => setDel(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete this payment?</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+          <Typography variant="body2">{f.customer} · {money(f.amount)} · {fdate(f.received)}</Typography>
+          <Typography variant="body2" color="text.secondary">It leaves the ledger, the totals and the workbook, and goes to Deleted, where it can be restored.</Typography>
+          <TextField label="Why (optional)" value={del || ""} onChange={(e) => setDel(e.target.value)} placeholder="e.g. entered twice, wrong amount" autoFocus />
+        </Stack></DialogContent>
+        <DialogActions><Button onClick={() => setDel(null)}>Cancel</Button><Button color="error" variant="contained" onClick={remove}>Delete</Button></DialogActions>
+      </Dialog>
     </Drawer>
+  );
+}
+
+function DeletedDialog({ open, onClose, onRestored, say }) {
+  const [rows, setRows] = useState(null);
+  const load = useCallback(async () => { try { setRows(await api.get("/api/ledger/deleted")); } catch (e) { say(e.message, "error"); } }, [say]);
+  useEffect(() => { if (open) load(); }, [open, load]);
+  const restore = async (r) => {
+    try { const res = await api.post(`/api/ledger/${r.id}/restore`);
+      onRestored(res.excel === "pending" ? "Restored. It goes back into the workbook once the workbook is closed." : "Restored to the ledger and the workbook."); load(); }
+    catch (e) { say(e.message, "error"); }
+  };
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Deleted payments</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Payments taken out of the ledger. They don't count in any total or in the workbook until restored.</Typography>
+        {!rows ? <CircularProgress size={24} /> : !rows.length ? <Typography color="text.secondary">Nothing deleted.</Typography> :
+        <Box sx={{ overflowX: "auto" }}><Table size="small">
+          <TableHead><TableRow><TableCell>Received</TableCell><TableCell>Customer</TableCell><TableCell>Payee</TableCell><TableCell align="right">Amount</TableCell><TableCell>Deleted</TableCell><TableCell>Why</TableCell><TableCell /></TableRow></TableHead>
+          <TableBody>{rows.map((r) => (
+            <TableRow key={r.id}>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>{fdate(r.fields.received)}</TableCell><TableCell sx={{ fontWeight: 600 }}>{r.fields.customer}</TableCell>
+              <TableCell><SheetChip sheet={r.sheet} /></TableCell><TableCell align="right">{money(r.fields.amount)}</TableCell>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>{fdate((r.deleted_at || "").slice(0, 10))}<Typography variant="caption" display="block" color="text.secondary">by {r.deleted_by}</Typography></TableCell>
+              <TableCell>{r.reason}</TableCell>
+              <TableCell align="right"><Button size="small" startIcon={<RestoreIcon />} onClick={() => restore(r)}>Restore</Button></TableCell>
+            </TableRow>))}
+          </TableBody></Table></Box>}
+      </DialogContent>
+      <DialogActions><Button onClick={onClose}>Close</Button></DialogActions>
+    </Dialog>
   );
 }

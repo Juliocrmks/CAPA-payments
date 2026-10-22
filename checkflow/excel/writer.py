@@ -281,7 +281,19 @@ def sync_rows(path, items):
     out, changed = {}, False
     for it in items:
         old, new = it["old"], it["new"]
+        op = it.get("op") or ""
+        if op == "write":                                 # restored from Deleted: write it into its day block again
+            if new.get("sheet") not in wb.sheetnames: out[it["id"]] = ("err", f"Sheet '{new.get('sheet')}' is not in the workbook."); continue
+            try: rows = write_day(wb[new["sheet"]], new["received"], [dict(new, id="w")])
+            except ValueError as e: out[it["id"]] = ("err", str(e)); continue
+            out[it["id"]] = ("ok", new["sheet"], rows["w"], True); changed = True; continue
         if old.get("sheet") not in wb.sheetnames: out[it["id"]] = ("err", f"Sheet '{old.get('sheet')}' not found."); continue
+        if op == "remove":                                # deleted from the ledger: empty its row (no rows shift, SUMs hold)
+            lay = Layout(wb[old["sheet"]])
+            r = find_row(lay, old, it.get("row"))
+            if r: _empty_row(lay, r); changed = True
+            out[it["id"]] = ("removed",)                  # a row already gone by hand counts as removed too
+            continue
         if new.get("sheet") not in wb.sheetnames: out[it["id"]] = ("err", f"Sheet '{new.get('sheet')}' is not in the workbook."); continue
         lay = Layout(wb[old["sheet"]])
         r = find_row(lay, old, it.get("row"))

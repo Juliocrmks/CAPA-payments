@@ -117,43 +117,119 @@ function SignIn({ draft, set, save, say }) {
   );
 }
 
+const ROLES = [["admin", "Admin", "Everything: payments, ledger edits and deletes, attachments, analytics, settings, users"],
+  ["ar", "AR", "Ledger and daily totals, view and download images, set Taxable"],
+  ["readonly", "Read only", "Ledger and daily totals, view images (no download), no changes"]];
+const roleName = (r) => (ROLES.find(([k]) => k === r) || [r, r])[1];
+
 function Users({ me, say }) {
-  const [users, setUsers] = useState([]); const [add, setAdd] = useState(null);
-  const load = useCallback(async () => setUsers(await api.get("/api/users")), []);
+  const [users, setUsers] = useState([]); const [reqs, setReqs] = useState([]);
+  const [add, setAdd] = useState(null); const [bulk, setBulk] = useState(null); const [reset, setReset] = useState(null); const [shown, setShown] = useState(null);
+  const load = useCallback(async () => { setUsers(await api.get("/api/users")); setReqs(await api.get("/api/password-requests")); }, []);
   useEffect(() => { load(); }, [load]);
   const patch = async (u, body) => { try { setUsers(await api.patch(`/api/users/${u.id}`, body)); } catch (e) { say(e.message, "error"); } };
-  const create = async () => { try { setUsers(await api.post("/api/users", add)); setAdd(null); say("User added."); } catch (e) { say(e.message, "error"); } };
+  const create = async () => {
+    try { const r = await api.post("/api/users", add); setUsers(r.users); setAdd(null); setShown([{ name: add.display_name, email: add.email, role: add.role, ok: true, password: add.password ? "" : r.password }]); }
+    catch (e) { say(e.message, "error"); }
+  };
+  const createMany = async () => {
+    try { const r = await api.post("/api/users/bulk", { text: bulk }); setUsers(r.users); setBulk(null); setShown(r.results); }
+    catch (e) { say(e.message, "error"); }
+  };
+  const doReset = async () => {
+    try { const r = await api.post(`/api/users/${reset.u.id}/password`, { password: reset.password, must_change: reset.must_change }); setUsers(r.users);
+      setReqs(await api.get("/api/password-requests"));
+      setShown([{ name: reset.u.display_name, email: reset.u.email || reset.u.username, role: reset.u.role, ok: true, password: reset.password ? "" : r.password, reset: true }]); setReset(null); }
+    catch (e) { say(e.message, "error"); }
+  };
+  const openReset = (u) => setReset({ u, password: "", must_change: true });
   return (
-    <Section title="Users" help="Admins load, review and send payments and change settings. Accounts receivable only open the ledger and set Taxable.">
-      <Box sx={{ overflowX: "auto" }}><Table size="small">
-        <TableHead><TableRow><TableCell>User</TableCell><TableCell>Role</TableCell><TableCell>Account</TableCell><TableCell>Last sign-in</TableCell><TableCell /></TableRow></TableHead>
-        <TableBody>{users.map((u) => (
-          <TableRow key={u.id} sx={{ opacity: u.active ? 1 : .5 }}>
-            <TableCell><b>{u.username}</b>{u.display_name ? ` · ${u.display_name}` : ""}{u.must_change ? <Chip size="small" color="warning" label="default password" sx={{ ml: 1 }} /> : null}</TableCell>
-            <TableCell>
-              <TextField select value={u.role} onChange={(e) => patch(u, { role: e.target.value })} disabled={u.id === me.id || u.source === "ldap"} sx={{ minWidth: 190 }}>
-                <MenuItem value="admin">Admin</MenuItem><MenuItem value="ar">Accounts receivable</MenuItem></TextField>
-            </TableCell>
-            <TableCell>{u.source === "ldap" ? "Active Directory" : "Local"}</TableCell>
-            <TableCell>{u.last_login ? fdate(u.last_login.slice(0, 10)) : "never"}</TableCell>
-            <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
-              {u.source === "local" && <Button size="small" onClick={() => { const p = window.prompt(`New password for ${u.username} (6+ characters)`); if (p) patch(u, { password: p }); }}>Reset password</Button>}
-              {u.id !== me.id && <Button size="small" color={u.active ? "error" : "primary"} onClick={() => patch(u, { active: !u.active })}>{u.active ? "Disable" : "Enable"}</Button>}
-            </TableCell>
-          </TableRow>))}
-        </TableBody>
-      </Table></Box>
-      <Button sx={{ mt: 2 }} variant="outlined" onClick={() => setAdd({ username: "", password: "", role: "ar" })}>Add local user</Button>
+    <Section title="Users" help="Who can sign in and what they can do. People sign in with their email. New users and password resets get a temporary password; they choose their own at their next sign-in.">
+      <Stack spacing={2}>
+        {reqs.map((q) => (
+          <Alert key={q.id} severity="warning" action={<Stack direction="row" spacing={1}>
+            {q.user_id && <Button color="inherit" size="small" onClick={() => openReset(users.find((u) => u.id === q.user_id) || { id: q.user_id, username: q.username, email: q.email, display_name: q.display_name })}>Reset password</Button>}
+            <Button color="inherit" size="small" onClick={async () => setReqs(await api.post(`/api/password-requests/${q.id}/dismiss`))}>Dismiss</Button></Stack>}>
+            <b>{q.display_name || q.email || q.login}</b> asked for a password reset ({fdate(q.created_at.slice(0, 10))}).
+          </Alert>))}
+        <Box sx={{ overflowX: "auto" }}><Table size="small">
+          <TableHead><TableRow><TableCell>Person</TableCell><TableCell>Role</TableCell><TableCell>Last sign-in</TableCell><TableCell /></TableRow></TableHead>
+          <TableBody>{users.map((u) => (
+            <TableRow key={u.id} sx={{ opacity: u.active ? 1 : .5 }}>
+              <TableCell>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>{u.display_name || u.username}
+                  {!u.active && <Chip size="small" label="disabled" sx={{ ml: 1 }} />}
+                  {u.active && u.must_change ? <Chip size="small" color="warning" variant="outlined" label="temporary password" sx={{ ml: 1 }} /> : null}</Typography>
+                <Typography variant="caption" color="text.secondary">{u.email || u.username}{u.source === "ldap" ? " · Active Directory" : ""}</Typography>
+              </TableCell>
+              <TableCell>
+                <TextField select value={u.role} onChange={(e) => patch(u, { role: e.target.value })} disabled={u.id === me.id || u.source === "ldap"} sx={{ minWidth: 150 }}>
+                  {ROLES.map(([k, l]) => <MenuItem key={k} value={k}>{l}</MenuItem>)}</TextField>
+              </TableCell>
+              <TableCell>{u.last_login ? fdate(u.last_login.slice(0, 10)) : "never"}</TableCell>
+              <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                {u.source === "local" && <Button size="small" onClick={() => openReset(u)}>Reset password</Button>}
+                {u.id !== me.id && <Button size="small" color={u.active ? "error" : "primary"} onClick={() => patch(u, { active: !u.active })}>{u.active ? "Disable" : "Enable"}</Button>}
+              </TableCell>
+            </TableRow>))}
+          </TableBody>
+        </Table></Box>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" }, gap: 1 }}>
+          {ROLES.map(([k, l, d]) => <Box key={k} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 1.25 }}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{l}</Typography><Typography variant="caption" color="text.secondary">{d}</Typography></Box>)}
+        </Box>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" onClick={() => setAdd({ display_name: "", email: "", role: "ar", password: "" })}>Add user</Button>
+          <Button onClick={() => setBulk("")}>Add several</Button>
+        </Stack>
+      </Stack>
+
       <Dialog open={!!add} onClose={() => setAdd(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>Add a local user</DialogTitle>
+        <DialogTitle>Add a user</DialogTitle>
         <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-          <TextField label="Username" value={add?.username || ""} onChange={(e) => setAdd({ ...add, username: e.target.value })} />
-          <TextField type="password" label="Password (6+ characters)" value={add?.password || ""} onChange={(e) => setAdd({ ...add, password: e.target.value })} />
-          <TextField select label="Role" value={add?.role || "ar"} onChange={(e) => setAdd({ ...add, role: e.target.value })}>
-            <MenuItem value="ar">Accounts receivable: ledger only, sets Taxable</MenuItem><MenuItem value="admin">Admin: everything</MenuItem></TextField>
-          <Divider /><Typography variant="caption" color="text.secondary">Domain users don't need to be added: with Active Directory on, they appear here after their first sign-in.</Typography>
+          <TextField label="Name" value={add?.display_name || ""} onChange={(e) => setAdd({ ...add, display_name: e.target.value })} autoFocus />
+          <TextField label="Email (they sign in with it)" value={add?.email || ""} onChange={(e) => setAdd({ ...add, email: e.target.value })} />
+          <TextField select label="Role" value={add?.role || "ar"} onChange={(e) => setAdd({ ...add, role: e.target.value })} helperText={ROLES.find(([k]) => k === add?.role)?.[2]}>
+            {ROLES.map(([k, l]) => <MenuItem key={k} value={k}>{l}</MenuItem>)}</TextField>
+          <TextField label="Temporary password (optional)" value={add?.password || ""} onChange={(e) => setAdd({ ...add, password: e.target.value })}
+            helperText="Leave empty to generate one. They choose their own at first sign-in." />
         </Stack></DialogContent>
-        <DialogActions><Button onClick={() => setAdd(null)}>Cancel</Button><Button variant="contained" onClick={create}>Add user</Button></DialogActions>
+        <DialogActions><Button onClick={() => setAdd(null)}>Cancel</Button><Button variant="contained" onClick={create} disabled={!add?.email}>Add user</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={bulk !== null} onClose={() => setBulk(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Add several users</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+          <Typography variant="body2" color="text.secondary">One person per line: <b>Name, email, role</b>. Role is Admin, AR or Read only. Each gets a temporary password, shown once on the next screen.</Typography>
+          <TextField multiline minRows={8} value={bulk || ""} onChange={(e) => setBulk(e.target.value)} placeholder={"Sandy Marks, cashier@company.com, Admin\nMichelle Ebert, collections@company.com, AR\nRichard Escalera, rescalera@company.com, Read only"}
+            InputProps={{ sx: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13 } }} />
+        </Stack></DialogContent>
+        <DialogActions><Button onClick={() => setBulk(null)}>Cancel</Button><Button variant="contained" onClick={createMany} disabled={!bulk?.trim()}>Add users</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={!!reset} onClose={() => setReset(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Reset password for {reset?.u.display_name || reset?.u.email || reset?.u.username}</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField label="New password (optional)" value={reset?.password || ""} onChange={(e) => setReset({ ...reset, password: e.target.value })} helperText="Leave empty to generate a temporary one." autoFocus />
+          <FormControlLabel control={<Switch checked={!!reset?.must_change} onChange={(e) => setReset({ ...reset, must_change: e.target.checked })} />} label="Ask them to choose their own at next sign-in" />
+        </Stack></DialogContent>
+        <DialogActions><Button onClick={() => setReset(null)}>Cancel</Button><Button variant="contained" onClick={doReset}>Reset password</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={!!shown} onClose={() => setShown(null)} maxWidth="md" fullWidth>
+        <DialogTitle>{shown?.[0]?.reset ? "Password reset" : "Users added"}</DialogTitle>
+        <DialogContent>
+          {shown?.some((r) => r.password) && <Alert severity="info" sx={{ mb: 2 }}>Give each person their temporary password. It is shown only now; they'll choose their own when they sign in.</Alert>}
+          <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Role</TableCell><TableCell>Temporary password</TableCell></TableRow></TableHead>
+            <TableBody>{(shown || []).map((r, i) => (
+              <TableRow key={i}><TableCell>{r.name}</TableCell><TableCell>{r.email}</TableCell><TableCell>{roleName(r.role)}</TableCell>
+                <TableCell sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{r.ok ? (r.password || "the one you typed") : <Typography variant="body2" color="error">{r.error}</Typography>}</TableCell></TableRow>))}
+            </TableBody></Table>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => navigator.clipboard?.writeText((shown || []).filter((r) => r.ok && r.password).map((r) => `${r.name}\t${r.email}\t${roleName(r.role)}\t${r.password}`).join("\n"))}>Copy all</Button>
+          <Button variant="contained" onClick={() => setShown(null)}>Done</Button>
+        </DialogActions>
       </Dialog>
     </Section>
   );
@@ -161,7 +237,9 @@ function Users({ me, say }) {
 
 const ACTION = { login: "Signed in", uploaded: "Uploaded", submitted: "Sent to Excel", ledger_edit: "Changed in ledger", status_validated: "Validated", status_pending: "Set pending",
   status_review: "Back to review", payment_deleted: "Removed payment", payment_added: "Added payment", settings_changed: "Changed settings", user_added: "Added user",
-  user_changed: "Changed user", password_changed: "Changed password" };
+  user_changed: "Changed user", password_changed: "Changed password", password_reset: "Reset a password", password_reset_requested: "Asked for a password reset",
+  ledger_deleted: "Deleted from ledger", ledger_restored: "Restored to ledger", attachment_added: "Added attachment", attachment_removed: "Removed attachment",
+  image_downloaded: "Downloaded image", pdf_downloaded: "Downloaded PDF", ledger_exported: "Exported ledger", import_excel: "Imported spreadsheet" };
 function Audit() {
   const [rows, setRows] = useState([]);
   useEffect(() => { api.get("/api/audit?limit=150").then(setRows); }, []);

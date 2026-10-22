@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS customers(name TEXT PRIMARY KEY, sheets TEXT, source 
 CREATE TABLE IF NOT EXISTS accounts(routing TEXT, account TEXT, customer TEXT, updated_at TEXT, PRIMARY KEY(routing, account));
 CREATE TABLE IF NOT EXISTS banks(routing TEXT PRIMARY KEY, name TEXT);
 CREATE TABLE IF NOT EXISTS memos(pattern TEXT PRIMARY KEY, customer TEXT);
+CREATE TABLE IF NOT EXISTS reset_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT, user_id INTEGER, created_at TEXT,
+  status TEXT DEFAULT 'open', handled_by TEXT, handled_at TEXT);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, username TEXT, action TEXT, payment_id INTEGER, detail TEXT);
 """
 
@@ -48,7 +50,9 @@ def init():
         legacy = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checks'").fetchone()
         c.executescript(SCHEMA)
         for table, col in (("users", "source TEXT DEFAULT 'local'"), ("users", "display_name TEXT"), ("users", "must_change INTEGER DEFAULT 0"),
-                           ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0"), ("submissions", "excel_fields TEXT")):
+                           ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0"), ("submissions", "excel_fields TEXT"),
+                           ("users", "email TEXT DEFAULT ''"), ("payments", "deleted_at TEXT"), ("payments", "deleted_by TEXT"),
+                           ("payments", "delete_reason TEXT"), ("submissions", "pending_op TEXT DEFAULT ''")):
             try: c.execute(f"ALTER TABLE {table} ADD COLUMN " + col)
             except sqlite3.OperationalError: pass
         if legacy: _migrate_v1(c)
@@ -340,20 +344,23 @@ def set_ledger(pid, **changes):
 
 def dirty_rows():
     with conn() as c:
-        rows = c.execute("""SELECT p.id, p.fields, s.sheet, s.row, s.excel_fields FROM payments p JOIN submissions s ON s.payment_id=p.id
+        rows = c.execute("""SELECT p.id, p.fields, s.sheet, s.row, s.excel_fields, s.pending_op FROM payments p JOIN submissions s ON s.payment_id=p.id
                             WHERE s.dirty=1""").fetchall()
     out = []
     for r in rows:
         f = json.loads(r["fields"])
         x = json.loads(r["excel_fields"]) if r["excel_fields"] else dict(f)
         x["sheet"] = r["sheet"] or x.get("sheet")
-        out.append(dict(id=r["id"], fields=f, excel=x, sheet=r["sheet"], row=r["row"]))
+        out.append(dict(id=r["id"], fields=f, excel=x, sheet=r["sheet"], row=r["row"], op=r["pending_op"] or ""))
     return out
 
-def sync_result(pid, row=None, note="", sheet=None, fields=None):
+def sync_result(pid, row=None, note="", sheet=None, fields=None, removed=False):
     with _lock, conn() as c:
         if note: c.execute("UPDATE submissions SET note=? WHERE payment_id=?", (note, pid))
-        else: c.execute("""UPDATE submissions SET dirty=0, note='', row=COALESCE(?, row), sheet=COALESCE(?, sheet),
+        elif removed:                                   # taken out of the workbook (deleted from the ledger)
+            c.execute("""UPDATE submissions SET dirty=0, note='', row=NULL, excel_fields=NULL, pending_op='', written_at=?
+                         WHERE payment_id=?""", (now(), pid))
+        else: c.execute("""UPDATE submissions SET dirty=0, note='', pending_op='', row=COALESCE(?, row), sheet=COALESCE(?, sheet),
                            excel_fields=COALESCE(?, excel_fields), written_at=? WHERE payment_id=?""",
                         (row, sheet, json.dumps(fields) if fields else None, now(), pid))
 
@@ -480,3 +487,80 @@ def undo_import(batch):
             c.execute(f"DELETE FROM submissions WHERE payment_id IN ({q})", chunk)
             c.execute(f"DELETE FROM payments WHERE id IN ({q}) AND imported=1", chunk)
         return len(ids)
+
+# ------------------------------------------------------------------ ledger: delete / restore (the ledger is the source of truth)
+def ledger_delete(pid, user, reason=""):
+    """Move a sent payment to the Deleted section. Its workbook row (if any) is queued for removal."""
+    with _lock, conn() as c:
+        r = c.execute("""SELECT p.fields, s.row, s.sheet, s.excel_fields FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
+                         WHERE p.id=? AND p.status='submitted'""", (pid,)).fetchone()
+        if not r: return False
+        c.execute("UPDATE payments SET status='deleted', deleted_at=?, deleted_by=?, delete_reason=? WHERE id=?", (now(), user, reason or "", pid))
+        if r["row"]:
+            f = json.loads(r["fields"])
+            if not r["excel_fields"]:
+                c.execute("UPDATE submissions SET excel_fields=? WHERE payment_id=?", (json.dumps(f | {"sheet": r["sheet"] or f.get("sheet")}), pid))
+            c.execute("UPDATE submissions SET dirty=1, pending_op='remove', note='' WHERE payment_id=?", (pid,))
+        return True
+
+def ledger_restore(pid):
+    """Back into the ledger. If its workbook row was already removed, it is queued to be written again."""
+    with _lock, conn() as c:
+        r = c.execute("""SELECT s.row, s.dirty, s.pending_op, s.workbook FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
+                         WHERE p.id=? AND p.status='deleted'""", (pid,)).fetchone()
+        if not r: return False
+        c.execute("UPDATE payments SET status='submitted', deleted_at=NULL, deleted_by=NULL, delete_reason=NULL WHERE id=?", (pid,))
+        if r["pending_op"] == "remove" and r["dirty"]:           # never left the workbook: just cancel the removal
+            c.execute("UPDATE submissions SET dirty=0, pending_op='', note='' WHERE payment_id=?", (pid,))
+        elif not r["row"] and r["workbook"] is not None and not str(r["workbook"]).startswith("upload:"):
+            c.execute("UPDATE submissions SET dirty=1, pending_op='write', note='' WHERE payment_id=?", (pid,))
+        return True
+
+def deleted_rows():
+    with conn() as c:
+        rows = c.execute("""SELECT p.*, s.sheet AS s_sheet FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
+                            WHERE p.status='deleted' ORDER BY p.deleted_at DESC""").fetchall()
+    out = []
+    for r in rows:
+        f = blank_fields() | json.loads(r["fields"])
+        out.append(dict(id=r["id"], fields=f, sheet=f.get("sheet") or r["s_sheet"], imported=bool(r["imported"]),
+                        deleted_at=r["deleted_at"], deleted_by=r["deleted_by"], reason=r["delete_reason"] or ""))
+    return out
+
+# ------------------------------------------------------------------ attachments (extra pages added to a payment by hand)
+def attach_pages(pid, page_ids):
+    with _lock, conn() as c:
+        top = c.execute("SELECT COALESCE(MAX(ord), -1) m FROM payment_pages WHERE payment_id=?", (pid,)).fetchone()["m"]
+        for k, pg in enumerate(page_ids): c.execute("INSERT OR IGNORE INTO payment_pages VALUES(?,?,?)", (pid, pg, top + 1 + k))
+
+def remove_attachment(pid, page_id):
+    """Only pages added as attachments can be removed; returns the image file name to delete, or None."""
+    with _lock, conn() as c:
+        r = c.execute("""SELECT p.image FROM pages p JOIN payment_pages pp ON pp.page_id=p.id
+                         WHERE pp.payment_id=? AND p.id=? AND p.kind='attachment'""", (pid, page_id)).fetchone()
+        if not r: return None
+        c.execute("DELETE FROM payment_pages WHERE payment_id=? AND page_id=?", (pid, page_id))
+        c.execute("DELETE FROM pages WHERE id=?", (page_id,))
+        return r["image"]
+
+def payment_pages(pid):
+    with conn() as c:
+        return [dict(r) for r in c.execute("""SELECT p.* FROM payment_pages pp JOIN pages p ON p.id=pp.page_id
+                                              WHERE pp.payment_id=? ORDER BY pp.ord, p.idx""", (pid,))]
+
+# ------------------------------------------------------------------ password reset requests ("I forgot my password")
+def add_reset_request(login, user_id):
+    with _lock, conn() as c:
+        if c.execute("SELECT 1 FROM reset_requests WHERE user_id IS ? AND login=? AND status='open'", (user_id, login)).fetchone(): return
+        c.execute("INSERT INTO reset_requests(login, user_id, created_at) VALUES(?,?,?)", (login, user_id, now()))
+
+def reset_requests():
+    with conn() as c:
+        return [dict(r) for r in c.execute("""SELECT r.id, r.login, r.user_id, r.created_at, u.display_name, u.username, u.email
+                                              FROM reset_requests r LEFT JOIN users u ON u.id=r.user_id
+                                              WHERE r.status='open' ORDER BY r.id""")]
+
+def close_reset_requests(user_id=None, req_id=None, by=""):
+    with _lock, conn() as c:
+        if req_id: c.execute("UPDATE reset_requests SET status='closed', handled_by=?, handled_at=? WHERE id=?", (by, now(), req_id))
+        if user_id: c.execute("UPDATE reset_requests SET status='closed', handled_by=?, handled_at=? WHERE user_id=? AND status='open'", (by, now(), user_id))

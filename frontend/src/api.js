@@ -39,3 +39,11 @@ export const fdate = (iso, opts) => {
 };
 export const todayIso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 export const METHODS = { check: "Check", cash: "Cash", card: "Credit card", ach: "ACH / e-check", wire: "Wire transfer" };
+
+// POST that returns a file (e.g. the ledger as .xlsx): saves it with the name the server suggests.
+export async function downloadPost(path, data, fallbackName) {
+  const r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data ?? {}) });
+  if (!r.ok) { let m = `Download failed (${r.status})`; try { m = (await r.json()).detail || m; } catch { /* empty */ } throw new Error(m); }
+  const name = (r.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || fallbackName;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click();
+}

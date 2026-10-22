@@ -1,17 +1,44 @@
 """Authentication: Active Directory (LDAP bind) with local-account fallback, cookie sessions, HTTP Basic for scripts.
 
-Roles: admin (everything) and ar (accounts receivable: ledger only, may change Taxable).
+Roles (enforced here, on the server; the UI only mirrors them):
+  admin     everything
+  ar        accounts receivable: ledger + daily totals, view and download payment images, set Taxable
+  readonly  ledger + daily totals, view images (no download), no changes
 Flow on login:
   1. If AD is configured (auth_mode=ldap), try an LDAP bind as the user. Success -> role from AD groups,
      a local 'ldap' user record is created/updated (no password stored).
   2. Otherwise, or if AD is unreachable / rejects the password, check local accounts (PBKDF2-hashed passwords).
 First run seeds a local admin/admin account flagged must_change (the UI keeps nagging until it is changed)."""
-import base64, hashlib, secrets, time
+import base64, hashlib, re, secrets, time
 from fastapi import Request, HTTPException
 from . import db
 
 COOKIE, TTL = "cf_session", 12 * 3600
 _fails = {}
+
+ROLES = {"admin": "Admin", "ar": "AR: read, download images, set Taxable", "readonly": "Read only"}
+PERMS = {
+    "admin": {"*"},
+    "ar": {"ledger.view", "images.view", "images.download", "taxable.edit", "export"},
+    "readonly": {"ledger.view", "images.view", "export"},
+}
+
+def can(user, perm):
+    p = PERMS.get((user or {}).get("role"), set())
+    return "*" in p or perm in p
+
+def require_perm(perm):
+    def dep(request: Request):
+        u = require_user(request)
+        if not can(u, perm): raise HTTPException(403, "Your account doesn't have access to this.")
+        return u
+    return dep
+
+WORDS = ["agua", "brisa", "cedro", "delta", "faro", "golfo", "isla", "jade", "lago", "mango", "nube", "olivo", "palma",
+         "quarzo", "rio", "sol", "tierra", "valle", "zafiro", "cielo", "roca", "pino", "arena", "llano"]
+def temp_password():
+    """Easy to read out loud or type once: two words + two digits (the user picks their own at first sign-in)."""
+    return f"{secrets.choice(WORDS)}-{secrets.choice(WORDS)}-{secrets.randbelow(90) + 10}"
 
 # ------------------------------------------------------------------ passwords / users
 def hash_pw(pw, salt=None):
@@ -26,28 +53,44 @@ def seed_admin():
     if user_count() == 0:
         create_user("admin", "admin", "admin", must_change=True, min_len=1)
 
-def create_user(username, pw, role, must_change=False, min_len=6, source="local", display_name=""):
-    username = (username or "").strip()
-    if not username: raise HTTPException(400, "Enter a username.")
-    if source == "local" and len(pw or "") < min_len: raise HTTPException(400, f"Password must be at least {min_len} characters.")
-    if role not in ("admin", "ar"): raise HTTPException(400, "Unknown role.")
+def create_user(username, pw, role, must_change=False, min_len=1, source="local", display_name="", email=""):
+    """username defaults to the email. pw None/'' for a local user -> a temporary password is generated (returned)."""
+    email = (email or "").strip().lower()
+    username = (username or "").strip() or email
+    if not username: raise HTTPException(400, "Enter an email or a username.")
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email): raise HTTPException(400, f"'{email}' doesn't look like an email address.")
+    if role not in ROLES: raise HTTPException(400, "Unknown role.")
+    if source == "local" and not pw:
+        pw, must_change = temp_password(), True
+    if source == "local" and len(pw) < min_len: raise HTTPException(400, f"Password must be at least {min_len} characters.")
     salt, h = hash_pw(pw) if source == "local" else ("", "")
     with db._lock, db.conn() as c:
-        try:
-            c.execute("""INSERT INTO users(username, salt, hash, role, source, display_name, active, must_change, created_at)
-                         VALUES(?,?,?,?,?,?,1,?,?)""", (username, salt, h, role, source, display_name, int(must_change), db.now()))
-        except Exception:
-            raise HTTPException(400, "That username already exists.")
+        if c.execute("""SELECT 1 FROM users WHERE username=? COLLATE NOCASE OR (email<>'' AND email=? COLLATE NOCASE)
+                        OR (?<>'' AND (username=? COLLATE NOCASE OR email=? COLLATE NOCASE))""",
+                     (username, username, email, email, email)).fetchone():
+            raise HTTPException(400, f"{email or username} already has an account.")
+        c.execute("""INSERT INTO users(username, salt, hash, role, source, display_name, active, must_change, created_at, email)
+                     VALUES(?,?,?,?,?,?,1,?,?,?)""", (username, salt, h, role, source, (display_name or "").strip(), int(must_change), db.now(), email))
+    return pw
 
-def set_password(uid, pw, min_len=6):
-    if len(pw or "") < min_len: raise HTTPException(400, f"Password must be at least {min_len} characters.")
+def set_password(uid, pw, min_len=1, must_change=False):
+    """Any password the person wants (non-empty). must_change=True when an admin set it for them."""
+    if len(pw or "") < min_len: raise HTTPException(400, "Enter a password.")
     salt, h = hash_pw(pw)
     with db._lock, db.conn() as c:
-        c.execute("UPDATE users SET salt=?, hash=?, must_change=0 WHERE id=?", (salt, h, uid))
+        c.execute("UPDATE users SET salt=?, hash=?, must_change=? WHERE id=?", (salt, h, int(must_change), uid))
+
+def find_login(login):
+    """A user by username or email (case-insensitive)."""
+    login = (login or "").strip()
+    with db.conn() as c:
+        r = c.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE OR (email<>'' AND email=? COLLATE NOCASE)", (login, login)).fetchone()
+    return dict(r) if r else None
 
 def _local_check(username, pw):
     with db.conn() as c:
-        u = c.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND source='local'", (username.strip(),)).fetchone()
+        u = c.execute("""SELECT * FROM users WHERE (username=? COLLATE NOCASE OR (email<>'' AND email=? COLLATE NOCASE)) AND source='local'""",
+                      (username.strip(), username.strip())).fetchone()
     if u and u["active"] and u["hash"] and secrets.compare_digest(hash_pw(pw, u["salt"])[1], u["hash"]): return dict(u)
     return None
 
@@ -68,7 +111,7 @@ def _ldap_user(username, info):
 def authenticate(username, pw):
     """-> (user dict, how) or (None, reason). Tries AD first when configured, then local accounts."""
     username = (username or "").strip()
-    if not username or not pw: return None, "Enter your username and password."
+    if not username or not pw: return None, "Enter your email and password."
     reason = None
     if db.get_setting("auth_mode") == "ldap" and db.get_setting("ldap_server"):
         from . import ldap_auth
@@ -86,7 +129,7 @@ def authenticate(username, pw):
     u = _local_check(username, pw)
     if u: return u, "local"
     if reason == "ad_unreachable": return None, "Active Directory is unreachable and no local account matched."
-    return None, "Wrong username or password."
+    return None, "Wrong email or password."
 
 def login(username, pw, ip):
     key = ((username or "").lower(), ip); now = time.time()
@@ -108,8 +151,9 @@ def logout(tok):
     with db._lock, db.conn() as c: c.execute("DELETE FROM sessions WHERE token=?", (tok,))
 
 def _public(u):
-    return dict(id=u["id"], username=u["username"], role=u["role"], source=u["source"],
-                display_name=u["display_name"] or "", must_change=bool(u["must_change"]))
+    return dict(id=u["id"], username=u["username"], role=u["role"], source=u["source"], email=u["email"] or "",
+                display_name=u["display_name"] or "", must_change=bool(u["must_change"]),
+                perms=sorted(PERMS.get(u["role"], set())))
 
 def current_user(request: Request):
     tok = request.cookies.get(COOKIE)

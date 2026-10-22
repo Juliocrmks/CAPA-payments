@@ -42,13 +42,22 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    and VCP each keep their own look. A second batch on the same day merges into that day's block. A timestamped
    backup is saved to `checkflow_backups/` next to the workbook first. If the workbook is open in Excel, nothing is
    written and you're told to close it.
-3. **Ledger** (admin + AR): search, quick period filters, sheet/method/taxable filters, group by day / week /
+3. **Ledger** (everyone; it is the source of truth, the workbook is written from it): search, quick period filters, sheet/method/taxable filters, group by day / week /
    month / quarter / company / sheet / method / deposit bank / taxable, sortable columns, subtotals, taxable totals
-   per deposit bank, CSV export, page images. **AR users can only change Taxable.** **Admins can correct any detail**
+   per deposit bank, CSV and **Excel export** (the rows on screen plus a daily bank totals sheet), page images.
+   **AR users can download images** (one page, or every page of a payment as one PDF, named
+   `2026-10-21_CUSTOMER_1068.00_p1.jpg`) for NetSuite, and change only Taxable. **Admins can correct any detail**
    of a sent payment (date, payee, customer, method, amount, refs, bank) from its side panel. Every edit takes the
    same road: saved at once, then written to the workbook (retried every 30 s while it's open in Excel). Same day,
    payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
    and its old row is emptied, so no rows shift and every `=SUM` stays right.
+
+   **Attachments** (admin): add pages to a sent payment at any time (a 3-page card authorization, a photo of a
+   paper receipt; PDF or image). They are kept with the payment, viewable and downloadable, never read or processed.
+
+   **Delete and restore** (admin): a payment entered wrongly is deleted with a reason. It leaves the ledger, every
+   total and analytics, and its workbook row is emptied. **Deleted** lists them with who, when and why; **Restore**
+   puts the payment back and writes it into the workbook again.
 
    **Daily bank totals** (everyone): for one day received, what went into each deposit bank as cash, checks and
    card/ACH/wire, how much is taxable, not taxable and not set yet, by bank or by bank and payee, with CSV. It is
@@ -72,9 +81,26 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    editable. **Import from workbook** can also bring past rows into the ledger once (optional migration).
 6. **Settings** (admin): workbook, deposit banks and per-method defaults, sign-in, users, activity log.
 
-## Sign-in
+## Sign-in and users
 
-* **Local accounts** (PBKDF2-hashed). Admin creates AR users in Settings → Users.
+People sign in with their **email**. Three roles:
+
+| Role | Can |
+|---|---|
+| **Admin** | everything: payments, ledger edits, deletes and attachments, analytics, settings, users |
+| **AR** | ledger and daily totals, view and **download** images, set Taxable, export |
+| **Read only** | ledger and daily totals, view images (no download), export; no changes |
+
+Roles are enforced by the server, not just hidden in the screen.
+
+* **Settings → Users**: add one person, or **Add several** by pasting lines like
+  `Jane Doe, jane@company.com, AR` (role: Admin, AR or Read only; tabs or spaces work too). Each new person gets a
+  temporary password, shown once; at their first sign-in they must choose their own (any password they like).
+  Change role, disable/enable, or **Reset password** (typed or generated, optionally forcing a change).
+* **Forgot your password?** on the sign-in page sends a request (same answer whether the email exists or not).
+  Admins see it at the top of Users and reset from there; no e-mail is sent.
+* Anyone signed in with a local account can change their own password from the menu at the top right.
+* **Local accounts** are PBKDF2-hashed. At least one active admin always remains.
 * **Active Directory**: Settings → Sign-in → *Active Directory + local fallback*. Server (`ldaps://dc01…`), sign-in
   suffix or domain, search base, admin group, AR group; **Test with an account…** checks it. AD users appear after
   their first sign-in with the role their group gives them. Local accounts keep working when the domain controller
@@ -97,7 +123,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (80 tests)
+tests/                     pytest suite (88 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 
