@@ -18,7 +18,7 @@ def block(ws, start):
     return out
 
 def test_layout_detects_practice_columns(workbook):
-    lay = Layout(openpyxl.load_workbook(workbook)["UPPER"])
+    lay = Layout(openpyxl.load_workbook(workbook)["UVM"])
     assert lay.cols["customer"] == 2 and lay.cols["order"] == 3 and lay.cols["taxable"] == 6 and lay.cols["credit"] == 9
     mvc = Layout(openpyxl.load_workbook(workbook)["MVC"])
     assert mvc.labels == {"check": "CHECK", "cash": "CASH", "credit": "CREDIT"} and mvc.order[:2] == ["credit", "check"]
@@ -56,9 +56,9 @@ def test_same_day_second_batch_merges_and_keeps_rows(workbook):
     assert ws.cell(sub, lay.sum_col).value == f"=SUM(G{first}:G{sub - 1})" and rows[3][1] < sub
 
 def test_other_days_untouched(workbook):
-    before = [[c.value for c in row] for row in openpyxl.load_workbook(workbook)["RIO"].iter_rows()]
-    writer.write_payments(workbook, [item(1, "check", "1.00", sheet="RIO")])
-    after = [[c.value for c in row] for row in openpyxl.load_workbook(workbook)["RIO"].iter_rows()]
+    before = [[c.value for c in row] for row in openpyxl.load_workbook(workbook)["RVP"].iter_rows()]
+    writer.write_payments(workbook, [item(1, "check", "1.00", sheet="RVP")])
+    after = [[c.value for c in row] for row in openpyxl.load_workbook(workbook)["RVP"].iter_rows()]
     assert after[:len(before)] == before
 
 def test_lock_file_blocks_writes(workbook):

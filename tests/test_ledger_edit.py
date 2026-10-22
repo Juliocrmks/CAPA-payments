@@ -47,13 +47,13 @@ def test_date_change_empties_the_old_row_and_writes_the_new_day(admin):
     admin.post("/api/settings/practice")
     a = send(admin, customer="LATE CO", amount="75.00", payref="9001", received="2026-11-03")
     old = ledger_row(admin, a)["row"]
-    res = admin.patch(f"/api/ledger/{a}", json=({"received": "2026-11-04", "sheet": "RIO"})).json()
-    assert res["excel"] == "synced" and res["sheet"] == "RIO"
+    res = admin.patch(f"/api/ledger/{a}", json=({"received": "2026-11-04", "sheet": "RVP"})).json()
+    assert res["excel"] == "synced" and res["sheet"] == "RVP"
     mvc, lay = sheet(admin, "MVC")
     assert mvc.cell(old, lay.cols["customer"]).value is None and mvc.cell(old, lay.amount_cols["check"]).value is None
-    rio, rlay = sheet(admin, "RIO")
+    rio, rlay = sheet(admin, "RVP")
     r = ledger_row(admin, a)
-    assert r["sheet"] == "RIO" and rio.cell(r["row"], rlay.cols["customer"]).value == "LATE CO"
+    assert r["sheet"] == "RVP" and rio.cell(r["row"], rlay.cols["customer"]).value == "LATE CO"
 
 def test_only_admins_and_only_valid_values(admin, client):
     admin.post("/api/settings/practice")
@@ -96,5 +96,5 @@ def test_imported_rows_are_edited_in_checkflow_only(admin):
     pv = admin.post("/api/import/excel", files={"file": ("old.xlsx", buf.getvalue())}).json()
     admin.post(f"/api/import/excel/{pv['token']}", json={})
     pid = next(x["id"] for x in admin.get("/api/ledger").json()["rows"] if x["fields"]["customer"] == "OLD IMPORT CO")
-    res = admin.patch(f"/api/ledger/{pid}", json=({"sheet": "RIO", "amount": "12.00"})).json()
-    assert res["excel"] == "skipped" and ledger_row(admin, pid)["sheet"] == "RIO" and ledger_row(admin, pid)["fields"]["amount"] == "12.00"
+    res = admin.patch(f"/api/ledger/{pid}", json=({"sheet": "RVP", "amount": "12.00"})).json()
+    assert res["excel"] == "skipped" and ledger_row(admin, pid)["sheet"] == "RVP" and ledger_row(admin, pid)["fields"]["amount"] == "12.00"

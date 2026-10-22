@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Paper, Stack, Typography, TextField, MenuItem, Chip, Table, TableHead, TableBody, TableRow, TableCell, TableSortLabel, Dialog, DialogTitle, DialogContent, DialogActions,
-  IconButton, Button, InputAdornment, Drawer, Divider, Tooltip, Select, ToggleButtonGroup, ToggleButton, Alert, CircularProgress } from "@mui/material";
+  IconButton, Button, InputAdornment, Drawer, Divider, Tooltip, Select, ToggleButtonGroup, ToggleButton, Alert, CircularProgress, Menu,
+  ListItemText, Checkbox, FormControlLabel } from "@mui/material";
+import SyncIcon from "@mui/icons-material/Sync";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import SearchIcon from "@mui/icons-material/Search";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
@@ -60,6 +63,8 @@ export default function Ledger({ me }) {
   const canDownload = isAdmin || me.role === "ar";            // read-only: view only
   const canAttach = isAdmin || me.role === "ar";              // add / remove attachments (never scanned pages)
   const [deletedOpen, setDeletedOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [xlMenu, setXlMenu] = useState(null);
   const [data, setData] = useState(null);
   const [q, setQ] = useState("");
   const [period, setPeriod] = useState("month");
@@ -165,8 +170,14 @@ export default function Ledger({ me }) {
         </Box>
         {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
         {isAdmin && <Button startIcon={<DeleteOutlineIcon />} onClick={() => setDeletedOpen(true)}>Deleted</Button>}
-        <Tooltip title="The whole ledger, every payment, plus daily bank totals"><span><Button startIcon={<DownloadIcon />} disabled={!data.rows.length}
-          onClick={() => downloadPost("/api/ledger/export", {}, "checkflow-ledger.xlsx").catch((e) => say(e.message, "error"))}>Export Excel</Button></span></Tooltip>
+        {isAdmin && <Button startIcon={<SyncIcon />} onClick={() => setSyncOpen(true)}>Sync workbook</Button>}
+        <Button startIcon={<DownloadIcon />} endIcon={<ArrowDropDownIcon />} onClick={(e) => setXlMenu(e.currentTarget)}>Export Excel</Button>
+        <Menu anchorEl={xlMenu} open={!!xlMenu} onClose={() => setXlMenu(null)}>
+          <MenuItem component="a" href="/api/workbook/download" onClick={() => setXlMenu(null)}>
+            <ListItemText primary="Workbook" secondary="The payee workbook as it is in Excel: MVC, UVM, RVP, VCP day blocks" /></MenuItem>
+          <MenuItem disabled={!data.rows.length} onClick={() => { setXlMenu(null); downloadPost("/api/ledger/export", {}, "checkflow-ledger.xlsx").catch((e) => say(e.message, "error")); }}>
+            <ListItemText primary="Ledger table" secondary="Every payment, one row each, plus daily bank totals" /></MenuItem>
+        </Menu>
         <Tooltip title="Just the rows on screen (search and filters applied)"><span><Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>CSV</Button></span></Tooltip>
       </Stack>
 
@@ -250,6 +261,7 @@ export default function Ledger({ me }) {
       <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
         say={say} onChanged={load} onDeleted={() => { setDetail(null); load(); }}
         onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
+      {isAdmin && syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} onDone={(m) => { say(m); load(); }} />}
       {isAdmin && <DeletedDialog open={deletedOpen} onClose={() => setDeletedOpen(false)} onRestored={(m) => { say(m); load(); }} say={say} />}
       {isAdmin && <ImportExcelDialog open={importing} onClose={() => setImporting(false)}
         onDone={(m, keepOpen) => { if (!keepOpen) { setImporting(false); setPeriod("all"); } say(m); load(); }} />}
@@ -404,6 +416,71 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheet
         <DialogActions><Button onClick={() => setDel(null)}>Cancel</Button><Button color="error" variant="contained" onClick={remove}>Delete</Button></DialogActions>
       </Dialog>
     </Drawer>
+  );
+}
+
+function SyncDialog({ onClose, onDone }) {
+  const [p, setP] = useState(null); const [err, setErr] = useState(""); const [keep, setKeep] = useState(true);
+  const [busy, setBusy] = useState(false); const [done, setDone] = useState(null);
+  useEffect(() => { api.get("/api/workbooks/sync").then(setP).catch((e) => setErr(e.message)); }, []);
+  const go = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await api.post("/api/workbooks/sync", { year: p.year, keep_workbook_rows: keep });
+      setDone(r); onDone(`${r.workbook} now matches the ledger: ${r.written.toLocaleString()} payments for ${r.year}.`);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const n = (v) => (v || 0).toLocaleString();
+  return (
+    <Dialog open onClose={busy ? undefined : onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Sync the workbook with the ledger</DialogTitle>
+      <DialogContent>
+        {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+        {!p && !err && <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 3 }}><CircularProgress size={22} /><Typography>Comparing the workbook with the ledger…</Typography></Stack>}
+        {done && <Alert severity="success" sx={{ mb: 2 }}>
+          Done. {done.workbook} has {n(done.written)} payments for {done.year}
+          {done.added_to_ledger ? `, and ${n(done.added_to_ledger)} row${done.added_to_ledger === 1 ? " that was" : "s that were"} only in the workbook ${done.added_to_ledger === 1 ? "is" : "are"} now in the ledger too` : ""}.
+          A copy of the workbook from before is in checkflow_backups.</Alert>}
+        {p && !done && <Stack spacing={2}>
+          <Typography color="text.secondary">
+            <b>{p.workbook}</b> · {p.year}. Every payee sheet is rewritten from the ledger's {p.year} payments in the workbook's own format:
+            same columns, colors, day blocks, subtotals and totals. A copy of the workbook is saved in checkflow_backups first.
+          </Typography>
+          {p.in_sync ? <Alert severity="success">The workbook already matches the ledger.</Alert> : null}
+          <Table size="small">
+            <TableHead><TableRow><TableCell>Sheet</TableCell><TableCell align="right">Ledger</TableCell><TableCell align="right">Workbook now</TableCell>
+              <TableCell align="right">Missing in workbook</TableCell><TableCell align="right">Only in workbook</TableCell></TableRow></TableHead>
+            <TableBody>{p.sheets.map((s) => (
+              <TableRow key={s.sheet}><TableCell><SheetChip sheet={s.sheet} /></TableCell>
+                <TableCell align="right">{n(s.ledger)}<Typography variant="caption" display="block" color="text.secondary">{money(s.ledger_total)}</Typography></TableCell>
+                <TableCell align="right">{n(s.workbook)}<Typography variant="caption" display="block" color="text.secondary">{money(s.workbook_total)}</Typography></TableCell>
+                <TableCell align="right" sx={{ fontWeight: s.add ? 600 : 400 }}>{s.add ? n(s.add) : "–"}</TableCell>
+                <TableCell align="right" sx={{ fontWeight: s.remove ? 600 : 400 }}>{s.remove ? n(s.remove) : "–"}</TableCell></TableRow>))}
+            </TableBody>
+          </Table>
+          {p.add > 0 && <Typography variant="body2">{n(p.add)} ledger payment{p.add === 1 ? " is" : "s are"} missing from the workbook and will be written into {p.add === 1 ? "its" : "their"} day blocks.</Typography>}
+          {p.remove > 0 && <Box>
+            <Alert severity="warning" sx={{ mb: 1 }}>{n(p.remove)} row{p.remove === 1 ? " is" : "s are"} in the workbook but not in the ledger (typed straight into Excel, or changed there).</Alert>
+            <Box sx={{ maxHeight: 180, overflow: "auto", border: 1, borderColor: "divider", borderRadius: 1 }}>
+              <Table size="small" stickyHeader><TableHead><TableRow><TableCell>Sheet</TableCell><TableCell>Row</TableCell><TableCell>Received</TableCell><TableCell>Customer</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
+                <TableBody>{p.only_in_workbook.map((r, i) => (
+                  <TableRow key={i}><TableCell>{r.sheet}</TableCell><TableCell>{r.row}</TableCell><TableCell>{fdate(r.received)}</TableCell><TableCell>{r.customer}</TableCell><TableCell align="right">{money(r.amount)}</TableCell></TableRow>))}
+                </TableBody></Table>
+            </Box>
+            <FormControlLabel sx={{ mt: 1 }} control={<Checkbox checked={keep} onChange={(e) => setKeep(e.target.checked)} />}
+              label={keep ? "Add them to the ledger first, so they stay in the workbook (recommended)" : "Leave them out: they'll be removed from the workbook"} />
+          </Box>}
+          {Object.keys(p.unmapped || {}).length > 0 && <Alert severity="info">Ledger payments for payees that aren't sheets in this workbook are left out: {Object.entries(p.unmapped).map(([k, v]) => `${k} (${v})`).join(", ")}.</Alert>}
+          {p.undated?.length > 0 && <Alert severity="info">{p.undated.length} workbook row{p.undated.length === 1 ? " has" : "s have"} no date and can't be placed: {p.undated.map((r) => `${r.sheet} row ${r.row}`).join(", ")}.</Alert>}
+        </Stack>}
+      </DialogContent>
+      <DialogActions>
+        {done ? <><Button component="a" href="/api/workbook/download">Download workbook</Button><Button variant="contained" onClick={onClose}>Close</Button></>
+          : <><Button onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button variant="contained" startIcon={busy ? <CircularProgress size={16} color="inherit" /> : <SyncIcon />} disabled={!p || busy || p.in_sync} onClick={go}>
+              {busy ? "Syncing…" : "Sync workbook"}</Button></>}
+      </DialogActions>
+    </Dialog>
   );
 }
 

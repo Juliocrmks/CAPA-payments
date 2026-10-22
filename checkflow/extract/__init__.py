@@ -11,7 +11,7 @@ from .docs import classify, parse_confirmation, parse_receipts, parse_bankpost, 
 
 PRIMARY = ("check", "confirmation", "bankpost", "receipt")
 
-def analyze_page(img, reg, received, batch_routings=()):
+def analyze_page(img, reg, received, batch_routings=(), partial=False):
     deg = orient(img)
     img = rotate(img, deg)
     items = ocr(img)
@@ -38,7 +38,7 @@ def analyze_page(img, reg, received, batch_routings=()):
         F, W = parse_bankpost(items, reg)
         recs.append(dict(kind="bankpost", fields=F, warns=W, y=0))
     elif len(rest) >= 5 and looks_like_check(rest):
-        r = parse_check(img, rest, reg, received, batch_routings)
+        r = parse_check(img, rest, reg, received, batch_routings, partial=partial)
         if r:
             recs.append(dict(kind="check", fields=r[0], warns=r[1], y=0))
             kind = "check"
@@ -125,7 +125,7 @@ def process(data, filename, reg, received=None, progress=None):
         if kind == "check?": retry.append(k)
     seen = {r["fields"]["routing"] for r in records if r["fields"].get("routing")}
     for k in retry:
-        up, kind, recs, _ = analyze_page(pages[k]["image"], reg, received, seen)
+        up, kind, recs, _ = analyze_page(pages[k]["image"], reg, received, seen, partial=True)
         pages[k]["kind"] = "check" if kind == "check?" else kind
         if kind == "check?":
             records.append(dict(kind="check", page=k, y=0, fields={"method": "check"},

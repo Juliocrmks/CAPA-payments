@@ -20,6 +20,12 @@ const EXTRA = {
 };
 const SOURCE = { check: "check", confirmation: "e-mail confirmation", receipt: "receipt slip", bankpost: "bank posting", manual: "typed in" };
 
+// '626.9' -> '626.90', '$1,200' -> '1200.00', '-75.5' -> '-75.50'; anything else is left as typed. Only on leaving the field.
+const tidyAmount = (v) => {
+  const s = String(v ?? "").replace(/[$,\s]/g, "");
+  return /^-?\d*\.?\d+$|^-?\d+\.$/.test(s) ? Number(s).toFixed(2) : String(v ?? "");
+};
+
 function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
   const [f, setF] = useState(p.fields);
   const [warns, setWarns] = useState(p.warns);
@@ -30,7 +36,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
   useEffect(() => { setF(p.fields); setWarns(p.warns); }, [p.id]);  // local edits win; the server copy only seeds the form
 
   const save = async (patch) => {
-    try { const r = await api.patch(`/api/payments/${p.id}`, { fields: patch }); setWarns(r.warns); setF((x) => ({ ...x, ...pick(r.fields, Object.keys(patch).concat(["sheet", "bank", "payref"])) })); onChange(r, true); }
+    try { const r = await api.patch(`/api/payments/${p.id}`, { fields: patch }); setWarns(r.warns); setF((x) => ({ ...x, ...pick(r.fields, ["sheet", "bank", "payref"].filter((k) => !(k in patch))) })); /* never overwrite what's being typed */ onChange(r, true); }
     catch (e) { setWarns((w) => ({ ...w, [Object.keys(patch)[0]]: e.message })); }
   };
   const set = (k, v, now) => {
@@ -87,7 +93,8 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
               FormHelperTextProps={{ title: W("method") || "", sx: { ...hint, color: W("method") ? "#8a5300" : undefined } }} sx={fieldSx("method")}>
               {Object.entries(METHODS).map(([k, l]) => <MenuItem key={k} value={k}>{l}</MenuItem>)}
             </TextField>
-            {tf("amount", "Amount", null, { InputProps: { startAdornment: <InputAdornment position="start">$</InputAdornment> } })}
+            {tf("amount", "Amount", null, { InputProps: { startAdornment: <InputAdornment position="start">$</InputAdornment> },
+              onBlur: () => { const t = tidyAmount(f.amount); if (t !== (f.amount || "")) set("amount", t, true); } })}
             <TextField select label="Payee sheet" value={f.sheet || ""} onChange={(e) => set("sheet", e.target.value, true)} helperText={W("sheet") || " "}
               FormHelperTextProps={{ title: W("sheet") || "", sx: { ...hint, color: W("sheet") ? "#8a5300" : undefined } }} sx={fieldSx("sheet")}>
               {(meta.sheets || []).concat(f.sheet && !(meta.sheets || []).includes(f.sheet) ? [f.sheet] : []).map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}

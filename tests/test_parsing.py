@@ -101,9 +101,19 @@ def test_unreadable_check_page_becomes_its_own_card(monkeypatch):
     """A page that looks like a check but whose MICR line can't be read gets its own card (not hidden as a support page)."""
     import numpy as np, cv2
     import checkflow.extract as X
-    monkeypatch.setattr(X, "analyze_page", lambda img, reg, received, batch=(): (img, "check?", [], []))
+    monkeypatch.setattr(X, "analyze_page", lambda img, reg, received, batch=(), partial=False: (img, "check?", [], []))
     ok, png = cv2.imencode(".png", np.full((60, 80, 3), 255, np.uint8))
     res = X.process(png.tobytes(), "photo.png", StaticRegistry(), "2026-10-13")
     assert len(res["payments"]) == 1
     p = res["payments"][0]
     assert p["fields"]["method"] == "check" and "bank line" in p["warns"]["page"] and p["fields"]["received"] == "2026-10-13"
+
+def test_partial_check_without_micr_line():
+    """A cashier's check whose MICR line OCR can't read: everything else is still read, routing/account left to type."""
+    from checkflow.extract.check import _remitter, _corner_number, micr_digits
+    it = lambda t, x0, y0, x1, y1: dict(t=t, x0=x0, y0=y0, x1=x1, y1=y1, s=.9, a=0)
+    items = [it("070552", 1110, 63, 1245, 99), it("Remitter:", 69, 220, 165, 240), it("RENE GUERRA", 182, 233, 340, 257),
+             it("October 21, 2026", 1003, 229, 1169, 252), it("Pay to the", 66, 289, 171, 318)]
+    assert _remitter(items) == "RENE GUERRA"
+    assert _corner_number(items, 1263) == "70552"
+    assert micr_digits("no7055 2m g11t91s447: 701 Authonedsenature") == "n07055 2m g114915447: 701 Authonedsenature"

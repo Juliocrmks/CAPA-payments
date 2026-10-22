@@ -105,7 +105,7 @@ export default function Learned() {
 function ImportDialog({ open, sheets, onClose, onDone }) {
   const [what, setWhat] = useState("customers"); const [pick, setPick] = useState([]); const [since, setSince] = useState("");
   const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
-  useEffect(() => { if (open) { setPick(sheets.filter((s) => ["MVC", "UPPER", "RIO", "VCP"].includes(s))); setErr(""); } }, [open, sheets]);
+  useEffect(() => { if (open) { setPick(sheets.filter((s) => ["MVC", "UVM", "RVP", "VCP", "UPPER", "RIO"].includes(s))); setErr(""); } }, [open, sheets]);
   const go = async () => {
     setBusy(true); setErr("");
     try { const r = await api.post("/api/import", { what, sheets: pick, since }); onDone(what === "customers" ? `${r.imported} customer names imported.` : `${r.imported} past payments added to the ledger.`); }

@@ -5,7 +5,7 @@ from collections import Counter
 import cv2
 from rapidfuzz import fuzz
 from .ocr import ocr, h_, cy_, norm
-from .common import MONEY, DATE, ZIPLINE, money_items, aba_ok, repair_aba, parse_written, customer_name
+from .common import MONEY, DATE, LONGDATE, ZIPLINE, money_items, aba_ok, repair_aba, parse_written, customer_name, parse_date
 
 def band_variants(img, item, pad_f=0.8):
     """Re-OCR one horizontal band with different preprocessing. Lazy so callers can stop early."""
@@ -22,11 +22,27 @@ def band_variants(img, item, pad_f=0.8):
         its = [i for i in ocr(im) if abs(cy_(i) - cy) < 0.9 * h * sc]
         yield " ".join(i["t"] for i in sorted(its, key=lambda i: i["x0"]))
 
+# Letters the OCR engine reads for E-13B MICR digits (it isn't trained on that font): 5 -> s, 4 -> t/h, 0 -> o, 1 -> i/l.
+MICR_LOOKALIKE = str.maketrans({"s": "5", "S": "5", "t": "4", "h": "4", "o": "0", "O": "0", "i": "1", "l": "1", "I": "1", "|": "1"})
+
+def micr_digits(t):
+    """Map look-alike letters to digits inside the digit runs of a MICR read ('g11t91s447' -> 'g114915447').
+    Only tokens that are mostly digits are touched, so words like 'Authorized' stay as they are."""
+    out = []
+    for tok in t.split():
+        core = re.sub(r"[^0-9A-Za-z|]", "", tok)
+        n = sum(c.isdigit() for c in core)
+        out.append(tok.translate(MICR_LOOKALIKE) if n >= 2 and n >= 0.5 * len(core) else tok)
+    return " ".join(out)
+
 def parse_micr(texts, printed_nums, known=()):
     """texts: one MICR line read several ways -> (routing, account, on-us tokens before routing, note).
     known: routing numbers already seen (learned banks, other checks in the batch) used to repair a dropped digit."""
     from rapidfuzz.distance import Levenshtein
     votes, info = Counter(), {}
+    mapped = [m for m in (micr_digits(t) for t in texts) if m not in texts]
+    weight = [1.0] * len(texts) + [0.6] * len(mapped)       # look-alike repairs count, but less than clean reads
+    texts = list(texts) + mapped
     for vi, t in enumerate(texts):
         toks = re.findall(r"\d+", t)
         for ti, tok in enumerate(toks):
@@ -44,7 +60,7 @@ def parse_micr(texts, printed_nums, known=()):
                     for off in range(0, max(0, len(tok) - L) + 1):
                         if Levenshtein.distance(tok[off:off + L], k) <= 1: cands.append((k, 2.5)); break
             for c, v in cands:
-                votes[c] += v; info.setdefault(c, (vi, ti))
+                votes[c] += v * weight[vi]; info.setdefault(c, (vi, ti))
     for p in printed_nums:
         if len(p) == 9 and aba_ok(p) and votes: votes[p] += 1
     note = None
@@ -153,14 +169,33 @@ def looks_like_check(items):
     if "YOUJUSTGOTPAID" in t or "QUOTE" in t[:200]: return False
     return bool(FRACTION.search(raw)) or any(k in t for k in ("PAYTOTHE", "ORDEROF", "DOLLARS", "AUTHORIZEDSIGNATURE"))
 
-def parse_check(img, items, reg, received=None, batch_routings=()):
-    """-> (fields, warns) or None when no MICR line is found."""
+def _corner_number(items, width):
+    """The check number printed on its own in the upper right of a check (e.g. '070552')."""
+    pay = [i for i in items if re.search(r"PAY|ORDER\s*OF", i["t"], re.I)]
+    lim = min(i["y0"] for i in pay) if pay else float("inf")
+    c = [i for i in items if re.fullmatch(r"\s*(?:N[O0]\.?|#)?\s*\d{3,10}\s*", i["t"]) and i["x0"] > 0.55 * width and i["y1"] <= lim]
+    if not c: return None
+    i = min(c, key=lambda i: i["y0"])
+    return re.sub(r"\D", "", i["t"]).lstrip("0") or None
+
+def _check_bottom(items):
+    """Where the check ends when its MICR line can't be read: just below the signature / memo line."""
+    marks = [i for i in items if re.search(r"SIGNATURE|AUTHORI[ZS]ED|MEMO|^\s*FOR\b", i["t"], re.I)]
+    return max(i["y1"] for i in marks) + 3 * h_(marks[0]) if marks else float("inf")
+
+def parse_check(img, items, reg, received=None, batch_routings=(), partial=False):
+    """-> (fields, warns) or None when no MICR line is found.
+    partial: still read amount, date, check #, payer and payee when the MICR line is unreadable (routing and account
+    are left for a person to type)."""
     known = set(reg.banks().keys()) | set(batch_routings)
     micr = find_micr(img, items, known)
-    if not micr: return None
+    if not micr:
+        if not partial: return None
+        micr = dict(routing=None, account=None, pre=[], onus="", note=None, y=_check_bottom(items), printed=printed_numbers(items))
     F, warns = {"method": "check"}, {}
     routing, acct = micr["routing"], micr["account"]
-    F["routing"] = routing
+    if routing: F["routing"] = routing
+    else: warns["routing"] = "The bank line at the bottom of the check couldn't be read. Type the routing number from the image."
     if micr["note"]: warns["routing"] = micr["note"]
     printed = micr["printed"]
     if acct:
@@ -173,8 +208,10 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
             warns["account"] = "MICR read differed slightly; used the account number printed on the stub. Verify."
         else: warns["account"] = "Read from the MICR line only. Verify the digits."
         F["account"] = acct
-    else:
+    elif routing:
         warns["account"] = "Account number not found."
+    else:
+        warns["account"] = "Type the account number from the bank line. It is how the customer is recognized next time."
 
     # The check itself is the region above the MICR line; a remittance stub may sit below it.
     top = [i for i in items if cy_(i) <= micr["y"] + 5]
@@ -233,6 +270,8 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
         if any(p.lstrip("0") == tail for p in printed) or tail:
             F["check_no"] = tail; F["account"] = acct[:-4]
             warns["check_no"] = "Taken from the end of the MICR line. Verify."
+    elif not routing and _corner_number(top, img.shape[1]):
+        F["check_no"] = _corner_number(top, img.shape[1]); warns["check_no"] = "Read from the number printed on the check. Verify."
     elif best:
         F["check_no"] = best; warns["check_no"] = "Check number not confirmed by the MICR line."
     else:
@@ -241,12 +280,10 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
 
     # date on the check
     for i in sorted(top, key=lambda i: i["y0"]):
-        m = DATE.search(i["t"].replace(" ", ""))
-        if m:
-            mo, d, y = int(m.group(1)), int(m.group(2)), m.group(3)
-            y = 2000 + int(y) if len(y) == 2 else int(y)
+        iso = parse_date(i["t"]) if (DATE.search(i["t"].replace(" ", "")) or LONGDATE.search(i["t"])) else None
+        if iso:
             try:
-                dt = datetime.date(y, mo, d); F["doc_date"] = dt.isoformat()
+                dt = datetime.date.fromisoformat(iso); F["doc_date"] = iso
                 ref = datetime.date.fromisoformat(received) if received else datetime.date.today()
                 age = (ref - dt).days
                 if age > 180: warns["doc_date"] = f"Check is dated {age} days before it was received (stale)."
@@ -255,11 +292,11 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
             break
 
     # drawer bank: learned from routing, else a printed '... Bank' line
-    b = reg.bank(routing)
+    b = reg.bank(routing) if routing else None
     if b: F["bank"] = b
     else:
         for i in sorted(top, key=lambda i: i["y0"]):
-            if re.search(r"\bBANK\b", i["t"], re.I) and len(i["t"]) < 32 and not re.search(r"banking|bank#", i["t"], re.I):
+            if re.search(r"\bBANK\b", i["t"], re.I) and 6 <= len(i["t"].strip()) < 32 and not re.search(r"banking|bank#", i["t"], re.I):
                 F["bank"] = i["t"].strip(); break
 
     # payee division (Magic Valley Concrete, ...) from the pay-to line
@@ -267,10 +304,10 @@ def parse_check(img, items, reg, received=None, batch_routings=()):
     if pay: F["payee"], F["sheet"] = pay
 
     # customer (who pays): learned from routing+account, else the printed address block
-    known = reg.customer_for_account(routing, F.get("account"))
+    known = reg.customer_for_account(routing, F.get("account")) if routing else None
     if known: F["customer"] = known
     else:
-        raw = _bill_to(items) or _payer_block(top, img.shape[1], F.get("payee", ""))
+        raw = _bill_to(items) or _remitter(top) or _payer_block(top, img.shape[1], F.get("payee", ""))
         if raw and (ZIPLINE.search(raw) or re.match(r"\s*\d+\s", raw)): raw = None
         if raw:
             F["customer_raw"] = raw
@@ -300,6 +337,22 @@ def _payer_block(items, width, payee):
     for i in sorted(items, key=lambda i: (i["y0"], i["x0"])):
         if LEGALNAME.search(i["t"]) and not NOT_PAYER.search(i["t"]) and not is_payee(i["t"]) and re.search(r"[A-Za-z]{3}", i["t"]):
             return re.sub(r",(?=\S)", ", ", i["t"].strip())
+    return None
+
+REMITTER = re.compile(r"^\s*(REMITTER|PURCHASER|PURCHASED\s*BY|PURCHASER'?S?\s*NAME|SENDER|FROM)\s*:?\s*", re.I)
+
+def _remitter(items):
+    """Cashier's checks and money orders name the payer after 'Remitter:' / 'Purchaser:' instead of an address block."""
+    for a in items:
+        m = REMITTER.match(a["t"])
+        if not m: continue
+        rest = a["t"][m.end():].strip()
+        if re.search(r"[A-Za-z]{3}", rest): return rest
+        h = h_(a)
+        near = [i for i in items if i is not a and re.search(r"[A-Za-z]{3}", i["t"]) and not NOT_PAYER.search(i["t"])
+                and not parse_date(i["t"]) and not MONEY.search(i["t"]) and not re.search(r"DATE", i["t"], re.I)
+                and ((abs(cy_(i) - cy_(a)) < 1.2 * h and i["x0"] > a["x0"]) or (0 < i["y0"] - a["y1"] < 2 * h and abs(i["x0"] - a["x0"]) < 6 * h))]
+        if near: return min(near, key=lambda i: max(0, i["x0"] - a["x1"]) + 3 * max(0, i["y0"] - a["y1"]))["t"].strip()
     return None
 
 def _bill_to(items):

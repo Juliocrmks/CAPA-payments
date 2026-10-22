@@ -28,6 +28,19 @@ def workbook_path():
         db.set_setting("workbook", p)
     return p
 
+def book_sheet(name, book_sheets, payees=None):
+    """The workbook's own sheet for a payee sheet name, through the payee aliases (UVM = UPPER, RVP = RIO), so a payment
+    marked UVM still goes to a workbook whose sheet is called UPPER and the other way round."""
+    if not name: return None
+    up = {s.upper(): s for s in book_sheets}
+    if name.upper() in up: return up[name.upper()]
+    for _n, sheet, aliases in (payees if payees is not None else db.registry().payees()):
+        names = [sheet.upper()] + [a.upper() for a in aliases]
+        if name.upper() in names:
+            for n in names:
+                if n in up: return up[n]
+    return None
+
 def ignore_list(): return [s.strip() for s in (db.get_setting("ignore_sheets") or "").split(",") if s.strip()]
 
 def sheets():
@@ -338,6 +351,120 @@ def download_workbook(path: str = Query(...), me_=Depends(require_admin)):
     return FileResponse(w["path"], filename=w["name"],
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+# ------------------------------------------------------------------ sync the workbook from the ledger
+# The ledger is the source of truth. Sync rewrites the payee sheets of the workbook in use so they hold exactly the
+# ledger's payments for the workbook's year, in the workbook's own format. Rows that are only in the workbook are listed
+# first and, by default, added to the ledger so nothing typed by hand is lost.
+def _sync_state(year=None):
+    from collections import Counter, defaultdict, deque
+    from .excel.layout import Layout
+    from .excel import ledger_import as li
+    path = workbook_path()
+    wb = writer.load(path)
+    ig = {s.strip().upper() for s in ignore_list()}
+    book, recs = [], []
+    for ws in wb.worksheets:
+        if ws.title.strip().upper() in ig: continue
+        try: Layout(ws)
+        except ValueError: continue
+        book.append(ws.title); recs += list(importer.history_ws(ws))
+    undated = [r for r in recs if not r["received"]]
+    recs = [r for r in recs if r["received"]]
+    li.flag_dates(recs)                  # likely year typos ('JAN/08/25' among 2026 rows): the fix is used only as a 2nd key
+    flagged = [r for r in recs if r.get("date_issue")]
+    if not year:
+        ys = Counter(r["received"][:4] for r in recs)
+        m = _re.search(r"(19|20)\d{2}", os.path.basename(path))
+        year = int(ys.most_common(1)[0][0]) if ys else int(m.group(0)) if m else datetime.date.today().year
+    payees, led, unmapped = db.registry().payees(), [], Counter()
+    for x in db.ledger_rows():
+        if not (x["fields"].get("received") or "").startswith(str(year)): continue
+        s = book_sheet(x["sheet"], book, payees)
+        if s: led.append((x, s))
+        else: unmapped[x["sheet"] or "(no payee)"] += 1
+    fp = lambda s, d, f: li.fingerprint(s, d, f["amount"], f["customer"])
+    def fixed_date(r):
+        fx = (r.get("date_issue") or {}).get("fix")
+        return fx if fx and not r["received"].startswith(str(year)) and fx.startswith(str(year)) else None
+    fixed = 0
+    q = defaultdict(deque)
+    for r in sorted(recs, key=lambda r: (r["sheet"], r["row"])):
+        q[fp(r["sheet"], r["received"], r)].append(r)
+        fx = (r.get("date_issue") or {}).get("fix")
+        if fx: q[fp(r["sheet"], fx, r)].append(r)          # matches a ledger row imported with the corrected date
+    used, pos, only_led = set(), {}, []
+    for x, s in sorted(led, key=lambda t: t[0]["id"]):
+        dq = q[fp(s, x["fields"]["received"], x["fields"])]
+        while dq and id(dq[0]) in used: dq.popleft()
+        if dq: r = dq.popleft(); used.add(id(r)); pos[x["id"]] = r["row"]
+        else: only_led.append((x, s))
+    only_wb = []
+    for r in sorted(recs, key=lambda r: (r["sheet"], r["row"])):
+        if id(r) in used: continue
+        fx = fixed_date(r)
+        if fx: fixed += 1
+        only_wb.append(dict(r, received=fx or r["received"]))
+    per = {s: dict(sheet=s, ledger=0, ledger_total=0.0, workbook=0, workbook_total=0.0, add=0, remove=0) for s in book}
+    for x, s in led: per[s]["ledger"] += 1; per[s]["ledger_total"] += float(x["fields"]["amount"] or 0)
+    for r in recs: per[r["sheet"]]["workbook"] += 1; per[r["sheet"]]["workbook_total"] += float(r["amount"])
+    for x, s in only_led: per[s]["add"] += 1
+    for r in only_wb: per[r["sheet"]]["remove"] += 1
+    for p in per.values(): p["ledger_total"], p["workbook_total"] = round(p["ledger_total"], 2), round(p["workbook_total"], 2)
+    return dict(path=path, year=year, book=book, led=led, pos=pos, only_wb=only_wb, only_led=only_led, per=list(per.values()),
+                unmapped=dict(unmapped), undated=undated, fixed=fixed, flagged=flagged)
+
+def _row_out(r): return dict(sheet=r["sheet"], row=r["row"], received=r["received"], customer=r["customer"], amount=r["amount"], method=r["method"])
+
+@app.get("/api/workbooks/sync")
+def sync_preview(year: Optional[int] = None, _=Depends(require_admin)):
+    try: st = _sync_state(year)
+    except writer.WorkbookError as e: raise HTTPException(409, str(e))
+    other = [r for r in st["only_wb"] if not r["received"].startswith(str(st["year"]))]
+    return dict(workbook=os.path.basename(st["path"]), year=st["year"], sheets=st["per"],
+                ledger=len(st["led"]), add=len(st["only_led"]), remove=len(st["only_wb"]), other_year=len(other),
+                only_in_workbook=[_row_out(r) for r in st["only_wb"][:200]], unmapped=st["unmapped"],
+                undated=[dict(sheet=r["sheet"], row=r["row"], customer=r["customer"], amount=r["amount"]) for r in st["undated"]],
+                dates_fixed=st["fixed"], in_sync=not st["only_led"] and not st["only_wb"])
+
+class SyncReq(BaseModel):
+    year: Optional[int] = None
+    keep_workbook_rows: bool = True      # add rows that are only in the workbook to the ledger first
+
+@app.post("/api/workbooks/sync")
+def sync_workbook(r: SyncReq, me_=Depends(require_admin)):
+    with WB_LOCK:
+        try:
+            st = _sync_state(r.year)
+            added = 0
+            if r.keep_workbook_rows and st["only_wb"]:
+                recs = [{k: v for k, v in x.items() if k not in ("row", "date_issue")} for x in st["only_wb"]]
+                added = db.import_upload(recs, me_["username"], uuid.uuid4().hex[:12], f"Sync {os.path.basename(st['path'])}")
+                st = _sync_state(st["year"])
+            items = {s: [] for s in st["book"]}
+            order = []
+            for x, s in st["led"]:
+                f = x["fields"]
+                items[s].append(dict(id=x["id"], sheet=s, **{k: f.get(k, "") for k in ("received", "customer", "order", "ticket", "payref",
+                                                                                          "method", "amount", "taxable", "deposit_bank")}))
+            for s in items: items[s].sort(key=lambda it: (it["received"], st["pos"].get(it["id"], 10 ** 9), it["id"]))
+            placed = writer.rebuild_sheets(st["path"], items)
+        except writer.WorkbookError as e: raise HTTPException(409, str(e))
+    fields = {x["id"]: x["fields"] for x, _ in st["led"]}
+    db.link_synced(st["path"], placed, fields)
+    unlinked = db.unlink_rows(st["path"], set(placed))
+    db.audit(me_["username"], "workbook_synced", file=os.path.basename(st["path"]), year=st["year"], rows=len(placed),
+             added_to_ledger=added, removed=len(st["only_wb"]) if not r.keep_workbook_rows else 0)
+    return dict(written=len(placed), added_to_ledger=added, year=st["year"], workbook=os.path.basename(st["path"]),
+                removed=0 if r.keep_workbook_rows else len(st["only_wb"]), unlinked=unlinked)
+
+@app.get("/api/workbook/download")
+def download_current_workbook(me_=Depends(require_perm("export"))):
+    """The workbook in use, as it is in Excel (all payee sheets, day blocks, subtotals)."""
+    p = workbook_path()
+    if not os.path.isfile(p): raise HTTPException(404, "The workbook file isn't there. An admin can pick one in Settings.")
+    db.audit(me_["username"], "workbook_downloaded", file=os.path.basename(p))
+    return FileResponse(p, filename=os.path.basename(p), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 class LdapTest(BaseModel):
     username: str
     password: str
@@ -560,17 +687,18 @@ REQUIRED = {"customer": "customer", "sheet": "payee sheet", "amount": "amount", 
 @app.post("/api/submit")
 def submit(s: Submit, user=Depends(require_admin)):
     items, skipped, rows = [], [], {p["id"]: p for p in db.list_payments(["validated"])}
-    valid = set(sheets())
+    valid, payees = sheets(), db.registry().payees()
     for pid in s.ids:
         p = rows.get(pid)
         if not p: skipped.append(dict(id=pid, reason="Not validated.")); continue
         f = p["fields"]
         missing = [label for k, label in REQUIRED.items() if not f.get(k)]
         if missing: skipped.append(dict(id=pid, reason="Missing " + ", ".join(missing) + ".")); continue
-        if f["sheet"] not in valid: skipped.append(dict(id=pid, reason=f"Sheet '{f['sheet']}' is not in the workbook.")); continue
+        target = book_sheet(f["sheet"], valid, payees)
+        if not target: skipped.append(dict(id=pid, reason=f"Sheet '{f['sheet']}' is not in the workbook.")); continue
         if (p["warns"].get("duplicate") or "").startswith("Already sent"): skipped.append(dict(id=pid, reason=p["warns"]["duplicate"])); continue
-        items.append(dict(id=pid, **{k: f.get(k, "") for k in ("sheet", "received", "customer", "order", "ticket", "payref", "method",
-                                                                 "amount", "taxable", "deposit_bank")}))
+        items.append(dict(id=pid, **{k: f.get(k, "") for k in ("received", "customer", "order", "ticket", "payref", "method",
+                                                                 "amount", "taxable", "deposit_bank")}, sheet=target))
     written = {}
     if items:
         path = workbook_path()
@@ -633,7 +761,11 @@ def push_to_excel():
             m = f"Its workbook ({os.path.basename(path)}) isn't there anymore, so Excel can't be updated."
             for r in rs: db.sync_result(r["id"], note=m)
             left, msg = left + len(rs), m; continue
-        items = [dict(id=r["id"], row=r["row"], op=r["op"], old=pick(r["excel"]), new=pick(r["fields"])) for r in rs]
+        try: bs, payees = writer.list_sheets(path), db.registry().payees()
+        except Exception: bs, payees = [], []
+        def mapped(f):
+            f = pick(f); f["sheet"] = book_sheet(f.get("sheet"), bs, payees) or f.get("sheet"); return f
+        items = [dict(id=r["id"], row=r["row"], op=r["op"], old=mapped(r["excel"]), new=mapped(r["fields"])) for r in rs]
         try:
             with WB_LOCK: res = writer.sync_rows(path, items)
         except writer.WorkbookError as e:

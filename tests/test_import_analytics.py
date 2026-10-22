@@ -18,11 +18,11 @@ def test_flat_table_headers_methods_and_payees():
             ["2026-01-07", "Bo Pools", "", "1001", "300", "", ""],
             ["2026-01-08", "", "Cash", "", "50", "MVC", ""]]                       # no customer -> skipped
     reg = StaticRegistry()
-    resolve = lambda t: (reg.match_payee(t) or (None, ""))[1] or ({"RVP": "RIO", "MVC": "MVC"}.get(t.upper(), ""))
+    resolve = lambda t: (reg.match_payee(t) or (None, ""))[1] or ({"RVP": "RVP", "MVC": "MVC"}.get(t.upper(), ""))
     recs, skipped = li.table_records(rows, "Sheet1", resolve)
     assert skipped == 1 and [r["method"] for r in recs] == ["card", "ach", "check"]
     assert recs[0]["customer"] == "ACME BUILDERS" and recs[0]["sheet"] == "MVC" and recs[0]["taxable"] == "Yes" and recs[0]["received"] == "2026-01-05"
-    assert recs[1]["sheet"] == "RIO" and recs[1]["amount"] == "2000.00" and recs[1]["taxable"] == "No" and recs[1]["payref"] == "778"
+    assert recs[1]["sheet"] == "RVP" and recs[1]["amount"] == "2000.00" and recs[1]["taxable"] == "No" and recs[1]["payref"] == "778"
     assert recs[2]["sheet"] == ""                                                    # asks for a payee in the preview
 
 def test_csv_file_keeps_negative_rows(tmp_path):

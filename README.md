@@ -38,13 +38,14 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    prefix or what's printed. Review each card (uncertain fields are amber), **Validate**, or set **Pending** for later.
    **Continue → Send to Excel** writes all validated payments.
 2. **Excel**: one block per sheet per *day received*: header row, CREDIT / CHECKS / CASH groups with `=SUM`
-   subtotals, TOTAL. Column positions, labels, group order and spacing are read from each sheet, so MVC, UPPER, RIO
+   subtotals, TOTAL. Column positions, labels, group order and spacing are read from each sheet, so MVC, UVM, RVP
    and VCP each keep their own look. A second batch on the same day merges into that day's block. A timestamped
    backup is saved to `checkflow_backups/` next to the workbook first. If the workbook is open in Excel, nothing is
    written and you're told to close it.
 3. **Ledger** (everyone; it is the source of truth, the workbook is written from it): search, quick period filters, sheet/method/taxable filters, group by day / week /
    month / quarter / company / sheet / method / deposit bank / taxable, sortable columns, subtotals, taxable totals
-   per deposit bank, **CSV** (the rows on screen) and **Export Excel** (the whole ledger plus a daily bank totals sheet), page images.
+   per deposit bank, **CSV** (the rows on screen) and **Export Excel**: the *Workbook* (the payee workbook as it is in Excel) or the *Ledger
+   table* (every payment, one row each, plus a daily bank totals sheet), page images.
    **AR users can download images** (one page, or every page of a payment as one PDF, named
    `2026-10-21_CUSTOMER_1068.00_p1.jpg`) for NetSuite, and change only Taxable. **Admins can correct any detail**
    of a sent payment (date, payee, customer, method, amount, refs, bank) from its side panel. Every edit takes the
@@ -54,6 +55,13 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
 
    **Attachments** (admin and AR): add pages to a sent payment at any time (a 3-page card authorization, a photo of a
    paper receipt; PDF or image). They are kept with the payment, viewable and downloadable, never read or processed.
+
+   **Sync workbook** (admin): makes the workbook in use match the ledger for its year. A preview lists, per sheet, the
+   ledger payments missing from the workbook and the rows that are only in the workbook (typed straight into Excel);
+   by default those are added to the ledger first so nothing is lost. Every payee sheet is then rewritten from the
+   ledger in the workbook's own format: title rows, header per day, the sheet's group order, subtotal labels, totals,
+   spacing, colors and habits such as 'CC' / 'WIRE' next to card and wire rows. A backup is saved first. Payee names
+   UPPER / RIO and UVM / RVP are the same sheets (aliases), so either spelling is written to the right sheet.
 
    **Delete and restore** (admin): a payment entered wrongly is deleted with a reason. It leaves the ledger, every
    total and analytics, and its workbook row is emptied. **Deleted** lists them with who, when and why; **Restore**
@@ -131,7 +139,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (95 tests)
+tests/                     pytest suite (98 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

@@ -52,16 +52,30 @@ def init():
         for table, col in (("users", "source TEXT DEFAULT 'local'"), ("users", "display_name TEXT"), ("users", "must_change INTEGER DEFAULT 0"),
                            ("users", "last_login TEXT"), ("documents", "found INTEGER DEFAULT 0"), ("submissions", "excel_fields TEXT"),
                            ("users", "email TEXT DEFAULT ''"), ("payments", "deleted_at TEXT"), ("payments", "deleted_by TEXT"),
-                           ("payments", "delete_reason TEXT"), ("submissions", "pending_op TEXT DEFAULT ''")):
+                           ("payments", "delete_reason TEXT"), ("submissions", "pending_op TEXT DEFAULT ''"),
+                           ("payments", "import_batch TEXT DEFAULT ''")):
             try: c.execute(f"ALTER TABLE {table} ADD COLUMN " + col)
             except sqlite3.OperationalError: pass
         if legacy: _migrate_v1(c)
+        # import batches used to be known only by submissions.workbook ('upload:<batch>:<file>'); keep them on the payment
+        # so a workbook sync can link imported rows to the workbook and Undo still finds them
+        c.execute("""UPDATE payments SET import_batch=(SELECT s.workbook FROM submissions s WHERE s.payment_id=payments.id)
+                     WHERE imported=1 AND COALESCE(import_batch, '')='' AND
+                           (SELECT s.workbook FROM submissions s WHERE s.payment_id=payments.id) LIKE 'upload:%'""")
         c.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
         for k, v in DEFAULT_SETTINGS.items(): c.execute("INSERT OR IGNORE INTO settings VALUES(?,?)", (k, v))
         if not c.execute("SELECT 1 FROM payees").fetchone():
             for name, sheet, aliases in SEED_PAYEES:
                 c.execute("INSERT OR IGNORE INTO payees(name, sheet, aliases) VALUES(?,?,?)", (name, sheet, ", ".join(aliases)))
         for r, n in SEED_BANKS.items(): c.execute("INSERT OR IGNORE INTO banks VALUES(?,?)", (r, n))
+        # the payee sheets are called UVM and RVP in the workbooks (UPPER / RIO were older names): rename once.
+        # submissions.sheet is left alone: it is the sheet name inside the file the row was written to.
+        if not c.execute("SELECT 1 FROM meta WHERE key='sheet_names_v2'").fetchone():
+            for old, new in (("UPPER", "UVM"), ("RIO", "RVP")):
+                c.execute("UPDATE payees SET sheet=? WHERE UPPER(sheet)=?", (new, old))
+                c.execute("""UPDATE payments SET fields=json_set(fields, '$.sheet', ?)
+                             WHERE UPPER(json_extract(fields, '$.sheet'))=?""", (new, old))
+            c.execute("INSERT OR REPLACE INTO meta VALUES('sheet_names_v2', '1')")
 
 def _migrate_v1(c):
     """v1 (single 'checks' table) -> v2 payments. Runs once; the old table is renamed, not deleted."""
@@ -379,6 +393,27 @@ def workbook_counts():
                                                             WHERE p.status='submitted' AND s.row IS NOT NULL AND COALESCE(s.workbook, '') != ''
                                                             GROUP BY s.workbook""")}
 
+def link_synced(path, placed, fields_by_id):
+    """After a workbook sync: these payments now live in that workbook at these rows. placed: {pid: (sheet, row)}"""
+    with _lock, conn() as c:
+        for pid, (sheet, row) in placed.items():
+            f = dict(fields_by_id[pid], sheet=sheet)
+            c.execute("""INSERT INTO submissions(payment_id, workbook, sheet, row, dirty, note, written_at, excel_fields, pending_op)
+                         VALUES(?,?,?,?,0,'',?,?,'')
+                         ON CONFLICT(payment_id) DO UPDATE SET workbook=excluded.workbook, sheet=excluded.sheet, row=excluded.row,
+                           dirty=0, note='', written_at=excluded.written_at, excel_fields=excluded.excel_fields, pending_op=''""",
+                      (pid, path, sheet, row, now(), json.dumps(f)))
+
+def unlink_rows(path, keep_ids):
+    """Rows of this workbook that the sync didn't write (deleted payments, other years' rows) no longer point into it."""
+    with _lock, conn() as c:
+        ids = [r["payment_id"] for r in c.execute("SELECT payment_id FROM submissions WHERE workbook=? AND row IS NOT NULL", (path,))
+               if r["payment_id"] not in keep_ids]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]; q = ",".join("?" * len(chunk))
+            c.execute(f"UPDATE submissions SET row=NULL, excel_fields=NULL, dirty=0, pending_op='', note='' WHERE payment_id IN ({q})", chunk)
+        return len(ids)
+
 # ------------------------------------------------------------------ learned data CRUD
 def learned():
     with conn() as c:
@@ -464,9 +499,10 @@ def import_upload(records, user, batch, filename):
         n = 0
         for rec in records:
             f = blank_fields() | {k: str(rec.get(k, "") or "") for k in KEYS if k in rec}
-            pid = c.execute("""INSERT INTO payments(status, fields, warns, sources, dedupe, imported, created_at, updated_at, submitted_at, submitted_by)
-                               VALUES('submitted',?,?,?,?,1,?,?,?,?)""", (json.dumps(f), "{}", '["import"]', dedupe_key(f), now(), now(),
-                                                                         rec.get("received") or now(), f"import:{user}")).lastrowid
+            pid = c.execute("""INSERT INTO payments(status, fields, warns, sources, dedupe, imported, created_at, updated_at, submitted_at,
+                                                    submitted_by, import_batch)
+                               VALUES('submitted',?,?,?,?,1,?,?,?,?,?)""", (json.dumps(f), "{}", '["import"]', dedupe_key(f), now(), now(),
+                                                                           rec.get("received") or now(), f"import:{user}", tag)).lastrowid
             c.execute("INSERT INTO submissions(payment_id, workbook, sheet, row, dirty, note, written_at) VALUES(?,?,?,NULL,0,'',?)",
                       (pid, tag, rec.get("sheet") or "", now()))
             n += 1
@@ -474,11 +510,11 @@ def import_upload(records, user, batch, filename):
 
 def import_batches():
     with conn() as c:
-        rows = c.execute("""SELECT s.workbook, COUNT(*) AS n, MIN(s.written_at) AS at, MIN(p.submitted_by) AS by_,
+        rows = c.execute("""SELECT p.import_batch AS workbook, COUNT(*) AS n, MIN(p.created_at) AS at, MIN(p.submitted_by) AS by_,
                                    MIN(json_extract(p.fields, '$.received')) AS first, MAX(json_extract(p.fields, '$.received')) AS last,
                                    SUM(CAST(json_extract(p.fields, '$.amount') AS REAL)) AS total
-                            FROM submissions s JOIN payments p ON p.id=s.payment_id
-                            WHERE s.workbook LIKE 'upload:%' GROUP BY s.workbook ORDER BY at DESC""").fetchall()
+                            FROM payments p
+                            WHERE p.import_batch LIKE 'upload:%' GROUP BY p.import_batch ORDER BY at DESC""").fetchall()
     out = []
     for r in rows:
         _, batch, name = (r["workbook"].split(":", 2) + ["", ""])[:3]
@@ -489,7 +525,7 @@ def import_batches():
 def undo_import(batch):
     if not re.fullmatch(r"[0-9a-f]{8,40}", batch or ""): return 0
     with _lock, conn() as c:
-        ids = [r["payment_id"] for r in c.execute("SELECT payment_id FROM submissions WHERE workbook LIKE ?", (f"upload:{batch}:%",))]
+        ids = [r["id"] for r in c.execute("SELECT id FROM payments WHERE import_batch LIKE ?", (f"upload:{batch}:%",))]
         for i in range(0, len(ids), 500):
             chunk = ids[i:i + 500]; q = ",".join("?" * len(chunk))
             c.execute(f"DELETE FROM submissions WHERE payment_id IN ({q})", chunk)

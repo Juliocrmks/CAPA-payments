@@ -25,8 +25,8 @@ GROUP_LABELS = {"check": "CHECKS", "cash": "CASH", "credit": "CREDIT"}
 SEED_PAYEES = [
     # name on checks / emails, workbook sheet, aliases used in file names
     ("Magic Valley Concrete", "MVC", ["MVC", "MAGIC VALLEY"]),
-    ("Rio Valley Pipe", "RIO", ["RVP", "RIO", "RIO VALLEY"]),
-    ("Upper Valley Materials", "UPPER", ["UVM", "UPPER", "UPPER VALLEY"]),
+    ("Rio Valley Pipe", "RVP", ["RVP", "RIO", "RIO VALLEY"]),
+    ("Upper Valley Materials", "UVM", ["UVM", "UPPER", "UPPER VALLEY"]),
     ("Valley Concrete Pumps", "VCP", ["VCP", "VALLEY CONCRETE PUMP"]),
 ]
 SEED_BANKS = {"114915447": "Rio Bank", "114917623": "IBC Bank"}

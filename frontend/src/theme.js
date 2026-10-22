@@ -15,9 +15,9 @@ export const brand = {
 };
 
 // Divisions get a colour each, used for sheet chips and charts alike (a payee looks the same everywhere).
-// MVC / UPPER / RIO are the logo triangles; VCP is aqua because brand clay fails colour-blind separation next to
+// MVC / UVM / RVP are the logo triangles; VCP is aqua because brand clay fails colour-blind separation next to
 // the red (validated with the dataviz palette checker: adjacent and all-pairs pass).
-export const sheetColor = { MVC: brand.concrete, RIO: brand.pipe, UPPER: brand.asphalt, VCP: "#1BAF7A" };
+export const sheetColor = { MVC: brand.concrete, RVP: brand.pipe, UVM: brand.asphalt, VCP: "#1BAF7A", RIO: brand.pipe, UPPER: brand.asphalt };
 
 // Chart palette for entities without a fixed colour (validated categorical order; never cycled past 8).
 export const chartSeries = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];

@@ -17,6 +17,7 @@ from .layout import Layout, H, last_row, MAXC, group_of_label, is_header, DATE_T
 from ..config import METHODS
 
 class WorkbookError(Exception): pass
+MONTHS_ABBR = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
 # ---------------------------------------------------------------- file handling
 def lock_path(path):
@@ -106,10 +107,20 @@ def _templates(lay):
     ws = lay.ws
     lo = max(2, last_row(ws) - 600)
     entry, sub, total = {}, None, None
+    from collections import Counter
+    marks, credit_n, wd = {}, Counter(), Counter()
+    tcol = lay.cols.get("ticket")
     for r in range(last_row(ws), lo, -1):
         if lay.is_entry(r):
             g = lay.entry_group(r)
             if g and g not in entry and _plain(ws.cell(r, lay.cols["customer"])): entry[g] = r
+            if g == "credit" and lay.label_col not in lay.amount_cols.values():     # e.g. 'CC' / 'WIRE' next to card and wire rows
+                m = "wire" if tcol and H(ws.cell(r, tcol).value) == "WIRE" else "card"
+                credit_n[m] += 1
+                v = H(ws.cell(r, lay.label_col).value)
+                if v and len(v) <= 6 and not group_of_label(v) or v in ("CC", "WIRE", "ACH"): marks.setdefault(m, Counter())[v] += 1
+            if H(ws.cell(r, lay.cols["customer"]).value).startswith(("WITHDR", "WTHDR")):
+                wd["dated" if ws.cell(r, lay.cols["date"]).value not in (None, "") else "undated"] += 1
         v = ws.cell(r, lay.sum_col).value
         if isinstance(v, str) and v.startswith("="):
             lab = ws.cell(r, lay.label_col).value
@@ -128,7 +139,9 @@ def _templates(lay):
     blank_row = last_row(ws) + 3
     return dict(entry={g: _row_snapshot(ws, entry.get(g, any_entry)) for g in ("cash", "check", "credit")} if any_entry else {},
                 sub=_row_snapshot(ws, sub) if sub else None, total=_row_snapshot(ws, total or sub) if (total or sub) else None,
-                blank=_row_snapshot(ws, blank_row))
+                blank=_row_snapshot(ws, blank_row),
+                marks={m: c.most_common(1)[0][0] for m, c in marks.items() if sum(c.values()) >= 0.4 * credit_n[m]},
+                undated_withdrawal=wd["undated"] > wd["dated"])
 
 def _clear(ws, r, blank):
     if blank: _paint(ws, r, blank, values=True)
@@ -157,14 +170,79 @@ def new_workbook(src, dst, year=None, ignore=()):
     wb.save(tmp); os.replace(tmp, dst)
     return dict(sheets=done, other=other)
 
-def _template_sheet(ws, lay, year=None):
-    tpl, head = _templates(lay), _row_snapshot(ws, lay.hdr)
+def _data_start(ws, lay):
+    """First row of the day blocks (title rows above it are kept)."""
     dcol = lay.cols["date"]
-    start = next((r for r in range(1, last_row(ws) + 1) if is_header(ws, r) or lay.is_entry(r)
-                  or DATE_TXT.match(str(ws.cell(r, dcol).value or "").strip())), lay.hdr)
+    return next((r for r in range(1, last_row(ws) + 1) if is_header(ws, r) or lay.is_entry(r)
+                 or DATE_TXT.match(str(ws.cell(r, dcol).value or "").strip())), lay.hdr)
+
+def _wipe(ws, start):
     for m in [m for m in ws.merged_cells.ranges if m.max_row >= start]: ws.unmerge_cells(str(m))
     ws.delete_rows(start, ws.max_row - start + 1)
     for k in [k for k in list(ws.row_dimensions.keys()) if k >= start]: del ws.row_dimensions[k]
+
+def _write_block(ws, lay, tpl, head, h, items):
+    """One day block at row h, laid out like the sheet's own: header, groups in the sheet's order with subtotals, total.
+    -> ({item id: row}, next free row)"""
+    _paint(ws, h, head)
+    groups = {g: [] for g in ("cash", "check", "credit")}
+    for it in items:
+        snap, g, _ = _entry_snapshot(lay, tpl, it)
+        groups[g].append((it["id"], snap))
+    out, r, subs = {}, h + 1, []
+    sumL = L_(lay.sum_col)
+    for g in lay.order:
+        rows = groups.get(g) or []
+        if not rows: continue
+        first = r
+        for key, snap in rows:
+            _paint(ws, r, snap); out[key] = r; r += 1
+        for _ in range(lay.gap_before_subtotal):
+            _clear(ws, r, tpl["blank"]); r += 1
+        col = L_(lay.amount_cols.get(g) or lay.cols["check"])
+        if tpl["sub"]: _paint(ws, r, tpl["sub"], values=False)
+        ws.cell(r, lay.label_col).value = lay.labels[g]
+        ws.cell(r, lay.sum_col).value = f"=SUM({col}{first}:{col}{r - 1})"
+        ws.cell(r, lay.sum_col).number_format = "#,##0.00"
+        subs.append(f"{sumL}{r}"); r += 1
+    if len(subs) >= 2:
+        _clear(ws, r, tpl["blank"]); r += 1
+        if tpl["total"]: _paint(ws, r, tpl["total"], values=False)
+        ws.cell(r, lay.label_col).value = lay.total_label
+        ws.cell(r, lay.sum_col).value = "=" + "+".join(subs)
+        ws.cell(r, lay.sum_col).number_format = "#,##0.00"
+        r += 1
+    return out, r
+
+def rebuild_sheets(path, plan):
+    """Rewrite whole payee sheets from the ledger: plan = {sheet: [items in order]} (items as for write_payments).
+    Title rows, columns, widths, colors, subtotal labels, group order and spacing are the sheet's own; every day block is
+    rewritten. A backup is saved first. -> {item id: (sheet, row)}"""
+    wb = load(path)
+    out = {}
+    for name, items in plan.items():
+        ws = wb[name]
+        lay = Layout(ws)
+        if not items:
+            _template_sheet(ws, lay); continue
+        tpl, head = _templates(lay), _row_snapshot(ws, lay.hdr)
+        start = _data_start(ws, lay)
+        _wipe(ws, start)
+        days = {}
+        for it in items: days.setdefault(it["received"], []).append(it)
+        r = start
+        for k, day in enumerate(sorted(days)):
+            if k:
+                for _ in range(lay.gap_between_blocks): _clear(ws, r, tpl["blank"]); r += 1
+            rows, r = _write_block(ws, lay, tpl, head, r, days[day])
+            out.update({i: (name, row) for i, row in rows.items()})
+    save(wb, path, backup_min_age=0)
+    return out
+
+def _template_sheet(ws, lay, year=None):
+    tpl, head = _templates(lay), _row_snapshot(ws, lay.hdr)
+    start = _data_start(ws, lay)
+    _wipe(ws, start)
     if year:
         for r in range(1, start):
             for c in range(1, MAXC):
@@ -208,11 +286,21 @@ def _entry_snapshot(lay, tpl, it):
         if it["method"] == "wire" and not it.get("payref"):
             vals[cols["payref"]] = datetime.datetime.fromisoformat(it["received"])
         elif it.get("payref"):
-            vals[cols["payref"]] = num_or_text(it["payref"])
+            m = re.fullmatch(r"\s*(\d{1,2})-([A-Za-z]{3})\s*", str(it["payref"]))      # a wire's date ref read back as '24-Feb'
+            mon = datetime.datetime.strptime(m.group(2).title(), "%b").month if m and m.group(2).title() in MONTHS_ABBR else None
+            if mon:
+                try: vals[cols["payref"]] = datetime.datetime(int(it["received"][:4]), mon, int(m.group(1)))
+                except ValueError: vals[cols["payref"]] = num_or_text(it["payref"])
+            else:
+                vals[cols["payref"]] = num_or_text(it["payref"])
     if "taxable" in cols and it.get("taxable") in ("Yes", "No"): vals[cols["taxable"]] = it["taxable"].upper()
     col = lay.amount_cols.get(g) or lay.amount_cols.get("credit") or lay.cols["check"]
     vals[col] = round(float(it["amount"]), 2)
     if "bank" in cols and it.get("deposit_bank"): vals[cols["bank"]] = it["deposit_bank"].upper()
+    mark = (tpl.get("marks") or {}).get(it["method"]) if g == "credit" else None
+    if mark and lay.label_col not in vals: vals[lay.label_col] = mark
+    if tpl.get("undated_withdrawal") and vals[col] < 0 and H(it.get("customer")).startswith(("WITHDR", "WTHDR")):
+        vals.pop(cols["date"], None)                      # the sheet types withdrawals without a date
     for c, v in vals.items():
         st = snap["cells"].get(c, (None, copy(openpyxl.cell.cell.Cell(lay.ws)._style), "General"))
         nf = ("d-mmm" if isinstance(v, datetime.datetime) else "#,##0.00" if c == col else

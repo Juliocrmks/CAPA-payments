@@ -17,15 +17,19 @@ def parse_sheet_date(v):
     except ValueError: return None
 
 def _iter_entries(ws):
-    try: lay = Layout(ws)
+    try: Layout(ws)
     except ValueError: return
-    hs = lay.headers
-    from .layout import header_map
+    from .layout import header_map, headers
+    hs = headers(ws)        # every day block in the sheet (Layout only looks at the recent ones to learn the style)
+    prev_day = None
     for k, h in enumerate(hs):
         cols = header_map(ws, h)
         nxt = hs[k + 1] if k + 1 < len(hs) else ws.max_row + 1
         amount_cols = {g: cols[g] for g in ("cash", "check", "credit") if g in cols}
-        last_date = None
+        # a withdrawal typed without a date before the day's first dated row still belongs to that day
+        last_date = next((d for d in (parse_sheet_date(ws.cell(r, cols["date"]).value) for r in range(h + 1, nxt)) if d), None)
+        last_date = last_date or prev_day       # a block with no date at all: the day before it (flagged by the caller's date check)
+        prev_day = last_date or prev_day
         for r in range(h + 1, nxt):
             cust = ws.cell(r, cols["customer"]).value
             if cust in (None, "") or H(cust) == "CUSTOMER": continue

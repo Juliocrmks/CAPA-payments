@@ -1,8 +1,8 @@
 """Read the layout of a payee sheet: column positions, day blocks, subtotal labels and spacing.
 
-Real sheets (MVC / UPPER / RIO / VCP) differ: column order, header wording ('CC / WIRES', 'WW/ WIRE',
+Real sheets (MVC / UVM / RVP / VCP) differ: column order, header wording ('CC / WIRES', 'WW/ WIRE',
 'CREDIT CARD'...), a TAXABLE column in 2026, which column holds subtotal labels vs. =SUM formulas,
-group order inside a day (credit first in MVC/UPPER 2026, checks first in RIO), and blank-row spacing.
+group order inside a day (credit first in MVC/UVM 2026, checks first in RVP), and blank-row spacing.
 Everything here is inferred from the sheet itself so a new year's workbook works without code changes."""
 import re
 from collections import Counter

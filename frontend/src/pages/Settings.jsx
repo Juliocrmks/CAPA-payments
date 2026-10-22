@@ -126,7 +126,7 @@ function Workbooks({ s, draft, set, save, say, onSettings }) {
             <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: .5 }}>Layout</Typography>
             <ToggleButtonGroup size="small" exclusive value={mk.source} onChange={(_, v) => v && setMk({ ...mk, source: v })}>
               <ToggleButton value="current">Like the workbook in use</ToggleButton>
-              <ToggleButton value="standard">Standard MVC / UPPER / RIO / VCP</ToggleButton>
+              <ToggleButton value="standard">Standard MVC / UVM / RVP / VCP</ToggleButton>
             </ToggleButtonGroup>
           </Box>
           <FormControlLabel control={<Switch checked={mk.use} onChange={(e) => setMk({ ...mk, use: e.target.checked })} />} label="Write new payments to it from now on" />

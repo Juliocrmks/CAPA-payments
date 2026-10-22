@@ -6,9 +6,9 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 SHEETS = {
     "MVC": ("MAGIC VALLEY CONCRETE 2026", ["DATE", "CUSTOMER", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK", "CREDIT",
                                            "DEPOSIT DATE", "DEPOSIT AMOUNT", "BANK"]),
-    "UPPER": ("UPPER VALLEY MATERIALS 2026", ["DATE", "CUSTOMER", "ORDER #", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK",
+    "UVM": ("UPPER VALLEY MATERIALS 2026", ["DATE", "CUSTOMER", "ORDER #", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK",
                                                "CREDIT", "DEPOSIT DATE", "DEPOSIT AMOUNT", "BANK"]),
-    "RIO": ("RIO VALLEY PIPE 2026", ["DATE", "CUSTOMER", "ORDER #", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK", "CREDIT",
+    "RVP": ("RIO VALLEY PIPE 2026", ["DATE", "CUSTOMER", "ORDER #", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK", "CREDIT",
                                      "DEPOSIT DATE", "DEPOSIT AMOUNT", "BANK"]),
     "VCP": ("VALLEY CONCRETE PUMPS 2026", ["DATE", "CUSTOMER", "TICKET REF", "PAYMENT REF:", "TAXABLE", "CASH", "CHECK", "CREDIT",
                                            "DEPOSIT DATE", "DEPOSIT AMOUNT", "BANK"]),
@@ -16,8 +16,8 @@ SHEETS = {
 SAMPLE = {  # one earlier day per sheet: (customer, ticket, payref, group, amount, bank)
     "MVC": [("PENNY CONSTRUCTION", 35290, 7801, "CREDIT", 1250.00, ""), ("TOVAR & CRUZ", None, 1238, "CHECK", 30666.83, "TNB"),
             ("THOGA INDUSTRIES", None, 1191, "CHECK", 15576.00, "TNB")],
-    "UPPER": [("ELITE UTILITY & PAVING LLC", 35300, 54, "CHECK", 1200.00, "TNB")],
-    "RIO": [("JR GARCIA COMPANY", 35310, 1622, "CHECK", 900.00, "TNB")],
+    "UVM": [("ELITE UTILITY & PAVING LLC", 35300, 54, "CHECK", 1200.00, "TNB")],
+    "RVP": [("JR GARCIA COMPANY", 35310, 1622, "CHECK", 900.00, "TNB")],
     "VCP": [("MARTINEZ PAVING", None, 44026, "CHECK", 6055.50, "TNB")],
 }
 GREEN, YELLOW, GREY, PINK, HEAD = "E2EFDA", "FFF2CC", "EDEDED", "FCE4EC", "D9E1F2"
