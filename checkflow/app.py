@@ -564,9 +564,10 @@ def page_image(page_id: int, download: int = 0, user=Depends(require_perm("image
         db.audit(user["username"], "image_downloaded", page=page_id)
     return FileResponse(path, media_type="image/jpeg", headers=headers)
 
-def _check_crop(img):
-    """The document itself on a scanned page: blank margins and the empty rest of a letter page are trimmed, so a check
-    printed on the top third of a page fills its thumbnail."""
+def _check_crop(img, first_block=True):
+    """The document itself on a scanned page: blank margins are trimmed, and for a check the empty rest of a letter
+    page too (it stops at the first long blank stretch), so a check printed on the top third of a page fills its
+    thumbnail. Other pages (receipt slips, e-mails) keep all their content: only the margins go."""
     import numpy as np
     g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     H, W = g.shape
@@ -580,7 +581,7 @@ def _check_crop(img):
         if rows[y]: end, blank = y, 0
         else:
             blank += 1
-            if blank > 0.07 * H and end - top > 0.08 * H: break
+            if first_block and blank > 0.07 * H and end - top > 0.08 * H: break
     cols = np.flatnonzero(ink[top:end + 1].mean(axis=0) > 0.003)
     left, right = (cols[0], cols[-1]) if len(cols) else (0, W - 1)
     pad = int(0.015 * max(H, W))
@@ -596,11 +597,12 @@ def page_thumb(page_id: int, w: int = 480, user=Depends(require_perm("images.vie
     src = os.path.join(config.IMAGES, p["image"])
     if not os.path.exists(src): raise HTTPException(404)
     tdir = os.path.join(config.IMAGES, "thumbs"); os.makedirs(tdir, exist_ok=True)
-    dst = os.path.join(tdir, f"{w}_{p['image']}")
+    check = (p.get("kind") or "").startswith("check")
+    dst = os.path.join(tdir, f"{w}{'c' if check else 'm'}_{p['image']}")
     if not os.path.exists(dst):
         img = cv2.imread(src)
         if img is None: raise HTTPException(404)
-        img = _check_crop(img)
+        img = _check_crop(img, first_block=check)
         if img.shape[1] > w: img = cv2.resize(img, (w, max(1, round(img.shape[0] * w / img.shape[1]))), interpolation=cv2.INTER_AREA)
         cv2.imwrite(dst, img, [cv2.IMWRITE_JPEG_QUALITY, 82])
     return FileResponse(dst, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})

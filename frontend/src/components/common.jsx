@@ -73,17 +73,18 @@ export const kindLabel = (k) => ({ check: "Check", confirmation: "Payment confir
   email: "E-mail", sensitive: "ID / card photo", support: "Supporting page", sheet: "Day sheet printout", attachment: "Attachment", other: "Page" }[k] || "Page");
 
 export function Thumbs({ pages, onOpen, height = 92, max = 6, canDownload = false, onRemove }) {
-  if (!pages?.length) return <Box sx={{ height, display: "grid", placeItems: "center", bgcolor: "#f1eeeb", borderRadius: 1, color: "text.secondary", fontSize: 13 }}>No document</Box>;
-  return (
-    <Stack direction="row" spacing={1} sx={{ overflowX: "auto", pb: 0.5 }}>
+  if (!pages?.length) return <Box sx={{ height, flexShrink: 0, display: "grid", placeItems: "center", bgcolor: "#f1eeeb", borderRadius: 1, color: "text.secondary", fontSize: 13 }}>No document</Box>;
+  return (   // flexShrink 0: inside a column (side panel) a scrolling row may otherwise be squeezed to a sliver
+    <Stack direction="row" spacing={1} sx={{ overflowX: "auto", overflowY: "hidden", pb: 0.5, flexShrink: 0 }}>
       {pages.slice(0, max).map((p, i) => (
         <Box key={p.id} sx={{ position: "relative", flex: "0 0 auto" }}>
           <Tooltip title={kindLabel(p.kind)}>
             <Box component="button" onClick={() => onOpen(i)} aria-label={`Open ${kindLabel(p.kind)}`}
               sx={{ p: 0, border: "1px solid", borderColor: p.kind === "attachment" ? "secondary.light" : "divider", borderRadius: 1, bgcolor: "#fff", cursor: "zoom-in", display: "block",
-                height, width: height * 0.78, overflow: "hidden", "&:focus-visible": { outline: "2px solid", outlineColor: "secondary.main" } }}>
-              {p.sensitive ? <Box sx={{ height: "100%", display: "grid", placeItems: "center", color: "text.secondary" }}><LockIcon fontSize="small" /></Box>
-                : <img src={p.thumb || p.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />}
+                height, minWidth: height * 0.6, maxWidth: height * 2.6, overflow: "hidden", "&:focus-visible": { outline: "2px solid", outlineColor: "secondary.main" } }}>
+              {p.sensitive ? <Box sx={{ height: "100%", width: height * 0.78, display: "grid", placeItems: "center", color: "text.secondary" }}><LockIcon fontSize="small" /></Box>
+                : <img src={p.thumb || p.image} alt="" loading="lazy"     // the tile takes the document's shape: a check is wide, a letter page tall
+                    style={{ height: "100%", width: "auto", maxWidth: height * 2.6, display: "block", objectFit: "cover", objectPosition: "top left" }} />}
             </Box>
           </Tooltip>
           {(canDownload && !p.sensitive) || (onRemove && p.kind === "attachment") ? (

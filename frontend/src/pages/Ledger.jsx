@@ -372,7 +372,7 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheet
   const readOnly = isAdmin ? info.filter(([k]) => ["Check / paid date", "Routing", "Account", "Card", "Bank posting", "Sent to Excel"].includes(k)) : info;
   const sheetOpts = (sheets.includes(r.sheet) || !r.sheet ? sheets : [r.sheet, ...sheets]).map((s) => [s, s]);
   return (
-    <Drawer anchor="right" open onClose={onClose} PaperProps={{ sx: { width: { xs: "100%", sm: 520 }, p: 3, border: 0 } }}>
+    <Drawer anchor="right" open onClose={onClose} PaperProps={{ sx: { width: { xs: "100%", sm: 520 }, p: 3, border: 0, "& > *": { flexShrink: 0 } } }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Typography variant="h2" sx={{ flex: 1 }}>{f.customer || "Payment"}</Typography>
         <IconButton aria-label="Close" onClick={onClose}><CloseIcon /></IconButton>
