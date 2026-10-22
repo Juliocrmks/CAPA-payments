@@ -1138,5 +1138,6 @@ def spa(path: str):
     f = os.path.join(config.STATIC, path)
     if path and os.path.isfile(f): return FileResponse(f)
     idx = os.path.join(config.STATIC, "index.html")
-    if os.path.exists(idx): return FileResponse(idx)
+    # the page must be checked on every load so an update shows at once (the scripts it loads have new names per build)
+    if os.path.exists(idx): return FileResponse(idx, headers={"Cache-Control": "no-cache"})
     return JSONResponse({"error": "UI not built. Run: cd frontend && npm install && npm run build"}, status_code=500)
