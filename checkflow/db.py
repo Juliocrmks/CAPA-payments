@@ -308,7 +308,7 @@ def set_rows(updates):
 
 def ledger_rows():
     with conn() as c:
-        rows = c.execute("""SELECT p.*, s.sheet AS s_sheet, s.row AS s_row, s.dirty AS s_dirty, s.note AS s_note
+        rows = c.execute("""SELECT p.*, s.sheet AS s_sheet, s.row AS s_row, s.dirty AS s_dirty, s.note AS s_note, s.workbook AS s_workbook
                             FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
                             WHERE p.status='submitted' ORDER BY p.id""").fetchall()
         pages = {}
@@ -321,6 +321,7 @@ def ledger_rows():
         f = blank_fields() | json.loads(r["fields"])
         out.append(dict(id=r["id"], fields=f, imported=bool(r["imported"]), submitted_at=r["submitted_at"], submitted_by=r["submitted_by"],
                         sheet=f.get("sheet") or r["s_sheet"], row=r["s_row"], pending=bool(r["s_dirty"]), note=r["s_note"] or "",
+                        workbook=os.path.basename(r["s_workbook"] or "") if r["s_row"] else "",
                         pages=pages.get(r["id"], [])))
     return out
 
@@ -344,14 +345,14 @@ def set_ledger(pid, **changes):
 
 def dirty_rows():
     with conn() as c:
-        rows = c.execute("""SELECT p.id, p.fields, s.sheet, s.row, s.excel_fields, s.pending_op FROM payments p JOIN submissions s ON s.payment_id=p.id
-                            WHERE s.dirty=1""").fetchall()
+        rows = c.execute("""SELECT p.id, p.fields, s.workbook, s.sheet, s.row, s.excel_fields, s.pending_op FROM payments p
+                            JOIN submissions s ON s.payment_id=p.id WHERE s.dirty=1""").fetchall()
     out = []
     for r in rows:
         f = json.loads(r["fields"])
         x = json.loads(r["excel_fields"]) if r["excel_fields"] else dict(f)
         x["sheet"] = r["sheet"] or x.get("sheet")
-        out.append(dict(id=r["id"], fields=f, excel=x, sheet=r["sheet"], row=r["row"], op=r["pending_op"] or ""))
+        out.append(dict(id=r["id"], fields=f, excel=x, workbook=r["workbook"] or "", sheet=r["sheet"], row=r["row"], op=r["pending_op"] or ""))
     return out
 
 def sync_result(pid, row=None, note="", sheet=None, fields=None, removed=False):
@@ -364,12 +365,19 @@ def sync_result(pid, row=None, note="", sheet=None, fields=None, removed=False):
                            excel_fields=COALESCE(?, excel_fields), written_at=? WHERE payment_id=?""",
                         (row, sheet, json.dumps(fields) if fields else None, now(), pid))
 
-def submitted_on(sheet, received):
+def submitted_on(sheet, received, workbook=None):
     """Payments already written for one sheet/day (their rows move when a day block is rebuilt)."""
     with conn() as c:
         rows = c.execute("""SELECT p.id, p.fields, s.row FROM payments p JOIN submissions s ON s.payment_id=p.id
-                            WHERE s.sheet=? AND p.imported=0""", (sheet,)).fetchall()
+                            WHERE s.sheet=? AND p.imported=0 AND (? IS NULL OR s.workbook=?)""", (sheet, workbook, workbook)).fetchall()
     return [dict(id=r["id"], fields=json.loads(r["fields"]), row=r["row"]) for r in rows if json.loads(r["fields"]).get("received") == received]
+
+def workbook_counts():
+    """{workbook path: payments written to it (still in the ledger)}"""
+    with conn() as c:
+        return {r["workbook"]: r["n"] for r in c.execute("""SELECT s.workbook, COUNT(*) n FROM submissions s JOIN payments p ON p.id=s.payment_id
+                                                            WHERE p.status='submitted' AND s.row IS NOT NULL AND COALESCE(s.workbook, '') != ''
+                                                            GROUP BY s.workbook""")}
 
 # ------------------------------------------------------------------ learned data CRUD
 def learned():

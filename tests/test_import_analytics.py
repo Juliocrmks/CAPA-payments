@@ -25,12 +25,16 @@ def test_flat_table_headers_methods_and_payees():
     assert recs[1]["sheet"] == "RIO" and recs[1]["amount"] == "2000.00" and recs[1]["taxable"] == "No" and recs[1]["payref"] == "778"
     assert recs[2]["sheet"] == ""                                                    # asks for a payee in the preview
 
-def test_csv_file_and_withdrawals(tmp_path):
+def test_csv_file_keeps_negative_rows(tmp_path):
     p = tmp_path / "pay.csv"
-    p.write_text("date,customer,amount,method,payee\n2026-02-01,ACME,100,check,MVC\n2026-02-01,WITHDRAWAL,-50,,MVC\n2026-02-02,BETA,0,,MVC\n")
+    p.write_text("date,customer,amount,method,payee\n2026-02-01,ACME,100,check,MVC\n2026-02-01,WITHDRAWAL,-50,,MVC\n"
+                 "2026-02-01,CASH ON HAND,(25.50),cash,MVC\n2026-02-02,BETA,0,,MVC\n2026-02-03,WITHDRAWAL,40,,MVC\n")
     res = li.read_file(str(p), "pay.csv", ["MVC"], StaticRegistry())
-    assert [r["customer"] for r in res["records"]] == ["ACME"]
-    assert any("withdrawal" in w for w in res["warnings"]) and res["skipped"] == 1
+    assert [(r["customer"], r["amount"]) for r in res["records"]] == [("ACME", "100.00"), ("WITHDRAWAL", "-50.00"),
+                                                                       ("CASH ON HAND", "-25.50"), ("WITHDRAWAL", "40.00")]
+    assert any("2 negative rows" in w and "-$75.50" in w for w in res["warnings"])
+    assert any("positive amount" in w and "check its sign" in w for w in res["warnings"])
+    assert res["skipped"] == 1                                                       # the zero row
 
 def test_year_typo_is_flagged_and_fixed():
     ds = ["2025-07-14", "2025-07-15", "2025-07-15", "2026-07-16", "2026-07-16", "2025-07-17", "2025-07-18", "2025-10-31", "2025-07-21", "2025-07-22"]
@@ -121,3 +125,22 @@ def test_analytics_endpoint(admin):
     assert one["kpis"]["current"]["count"] == 12 and any(s["id"] == "client-cadence" for s in one["storylines"])
     bd = admin.get("/api/analytics", params={"by": "customer", "start": "2023-01-01", "end": "2023-12-31", "sheets": "ANA"}).json()["breakdown"]
     assert [r["key"] for r in bd] == ["STEADY CO", "QUIET CO"] and bd[0]["share"] > 90
+
+def test_negative_rows_import_into_ledger_not_analytics_and_full_export(admin):
+    data = table_xlsx([[dt.date(2023, 5, 1), "NEG CO", 900, "check", "NEG"], [dt.date(2023, 5, 1), "WITHDRAWAL", -300, "cash", "NEG"],
+                       [dt.date(2023, 5, 2), "NEG CO", -120.5, "card", "NEG"]])
+    pv = admin.post("/api/import/excel", files={"file": ("neg.xlsx", data)}).json()
+    assert pv["rows"] == 3 and any("2 negative rows" in w for w in pv["warnings"])
+    assert admin.post(f"/api/import/excel/{pv['token']}", json={}).json()["imported"] == 3
+    led = [x for x in admin.get("/api/ledger").json()["rows"] if x["sheet"] == "NEG"]
+    assert sorted(float(x["fields"]["amount"]) for x in led) == [-300, -120.5, 900]
+    # analytics: money received only
+    an = admin.get("/api/analytics", params={"start": "2023-05-01", "end": "2023-05-02", "by": "customer"}).json()
+    assert an["kpis"]["current"]["total"] == 900 and an["kpis"]["current"]["count"] == 1
+    # Export Excel with no ids = the whole ledger (negatives included); with ids = just those
+    whole = openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={}).content))["Ledger"]
+    n_all = len(admin.get("/api/ledger").json()["rows"])
+    assert whole.max_row == n_all + 2                                                # header + rows + total
+    assert -300 in [whole.cell(r, 8).value for r in range(2, whole.max_row)]
+    some = openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={"ids": [led[0]["id"]]}).content))["Ledger"]
+    assert some.max_row == 3

@@ -13,7 +13,7 @@ import os, re, shutil, tempfile, datetime, time
 from copy import copy
 import openpyxl
 from openpyxl.utils import get_column_letter as L_
-from .layout import Layout, H, last_row, MAXC, group_of_label
+from .layout import Layout, H, last_row, MAXC, group_of_label, is_header, DATE_TXT
 from ..config import METHODS
 
 class WorkbookError(Exception): pass
@@ -115,6 +115,15 @@ def _templates(lay):
             lab = ws.cell(r, lay.label_col).value
             if group_of_label(lab) and sub is None: sub = r
             elif "TOTAL" in H(lab) and total is None: total = r
+    if not entry:                       # a new workbook's template block: empty, styled entry slot above each subtotal
+        slot = None
+        for r in range(lay.hdr + 1, last_row(ws) + 1):
+            v = ws.cell(r, lay.sum_col).value
+            g = group_of_label(ws.cell(r, lay.label_col).value) if isinstance(v, str) and v.startswith("=") else None
+            if g:
+                if slot and g not in entry: entry[g] = slot
+                slot = None
+            elif slot is None and not lay.used(r): slot = r
     any_entry = next(iter(entry.values()), None)
     blank_row = last_row(ws) + 3
     return dict(entry={g: _row_snapshot(ws, entry.get(g, any_entry)) for g in ("cash", "check", "credit")} if any_entry else {},
@@ -125,6 +134,64 @@ def _clear(ws, r, blank):
     if blank: _paint(ws, r, blank, values=True)
     else:
         for c in range(1, MAXC): ws.cell(r, c).value = None
+
+# ---------------------------------------------------------------- new workbook
+def new_workbook(src, dst, year=None, ignore=()):
+    """A new, empty workbook laid out like src (e.g. next year's file). Each payee sheet keeps its title rows, columns,
+    widths, colors, subtotal labels, group order and spacing, with one empty day block as the template the writer learns
+    from; every payment row is gone. Ignored and non-payee sheets (client sheets, Sheet1...) are copied as they are.
+    year: replaces the year in the title rows. src is never changed. -> {sheets: [...], other: [...]}"""
+    if os.path.exists(dst): raise WorkbookError("A workbook with that name already exists.")
+    wb = load(src)
+    ig = {H(x) for x in ignore}
+    done, other = [], []
+    for ws in wb.worksheets:
+        lay = None
+        if H(ws.title) not in ig:
+            try: lay = Layout(ws)
+            except ValueError: lay = None
+        if not lay: other.append(ws.title); continue
+        _template_sheet(ws, lay, year); done.append(ws.title)
+    if not done: raise WorkbookError("No payee sheets (with CUSTOMER / CASH / CHECK columns) in that workbook.")
+    tmp = dst + ".tmp"
+    wb.save(tmp); os.replace(tmp, dst)
+    return dict(sheets=done, other=other)
+
+def _template_sheet(ws, lay, year=None):
+    tpl, head = _templates(lay), _row_snapshot(ws, lay.hdr)
+    dcol = lay.cols["date"]
+    start = next((r for r in range(1, last_row(ws) + 1) if is_header(ws, r) or lay.is_entry(r)
+                  or DATE_TXT.match(str(ws.cell(r, dcol).value or "").strip())), lay.hdr)
+    for m in [m for m in ws.merged_cells.ranges if m.max_row >= start]: ws.unmerge_cells(str(m))
+    ws.delete_rows(start, ws.max_row - start + 1)
+    for k in [k for k in list(ws.row_dimensions.keys()) if k >= start]: del ws.row_dimensions[k]
+    if year:
+        for r in range(1, start):
+            for c in range(1, MAXC):
+                v = ws.cell(r, c).value
+                if isinstance(v, str): ws.cell(r, c).value = re.sub(r"\b(19|20)\d{2}\b", str(year), v)
+    r = start
+    _paint(ws, r, head)
+    subs = []
+    for g in [g for g in lay.order if g in lay.amount_cols] or ["check"]:
+        r += 1; slot = r
+        e = tpl["entry"].get(g)
+        if e: _paint(ws, r, dict(height=e["height"], cells={c: (None, st, nf) for c, (v, st, nf) in e["cells"].items()}))
+        for _ in range(lay.gap_before_subtotal):
+            r += 1; _clear(ws, r, tpl["blank"])
+        r += 1
+        if tpl["sub"]: _paint(ws, r, tpl["sub"], values=False)
+        col = L_(lay.amount_cols.get(g) or lay.cols["check"])
+        ws.cell(r, lay.label_col).value = lay.labels[g]
+        ws.cell(r, lay.sum_col).value = f"=SUM({col}{slot}:{col}{r - 1})"
+        ws.cell(r, lay.sum_col).number_format = "#,##0.00"
+        subs.append(f"{L_(lay.sum_col)}{r}")
+    if len(subs) >= 2 and lay.totals_always:
+        r += 2
+        if tpl["total"]: _paint(ws, r, tpl["total"], values=False)
+        ws.cell(r, lay.label_col).value = lay.total_label
+        ws.cell(r, lay.sum_col).value = "=" + "+".join(subs)
+        ws.cell(r, lay.sum_col).number_format = "#,##0.00"
 
 # ---------------------------------------------------------------- write a day
 def _entry_snapshot(lay, tpl, it):

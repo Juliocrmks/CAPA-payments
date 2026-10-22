@@ -17,6 +17,127 @@ function Section({ title, help, children }) {
   );
 }
 
+// ------------------------------------------------------------------ workbooks
+const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const whenText = (iso) => (iso ? `${fdate(iso.slice(0, 10))} ${iso.slice(11, 16)}` : "");
+function suggestName(cur, year) {
+  const base = (cur || "").split(/[\\/]/).pop() || "";
+  if (/Practice_Workbook/i.test(base) || !base) return `Payments ${year}.xlsx`;
+  return /(19|20)\d{2}/.test(base) ? base.replace(/(19|20)\d{2}/, String(year)) : base.replace(/\.(xlsx|xlsm)$/i, ` ${year}.$1`);
+}
+
+function Workbooks({ s, draft, set, save, say, onSettings }) {
+  const [books, setBooks] = useState(null); const [folder, setFolder] = useState("");
+  const [mk, setMk] = useState(null); const [busy, setBusy] = useState(false); const [typed, setTyped] = useState(false);
+  const load = useCallback(async () => { const r = await api.get("/api/workbooks"); setBooks(r.workbooks); setFolder(r.new_folder); }, []);
+  useEffect(() => { load(); }, [load, s.workbook]);
+  const use = async (b) => {
+    try { const r = await api.post("/api/workbooks/select", { path: b.path }); onSettings(r.settings); setBooks(r.workbooks); say(`Now writing to ${b.name}.`); }
+    catch (e) { say(e.message, "error"); }
+  };
+  const upload = async (file) => {
+    if (!file) return;
+    const fd = new FormData(); fd.append("file", file); setBusy(true);
+    try { const r = await api.upload("/api/workbooks/upload", fd); setBooks(r.workbooks); say(`Uploaded ${r.path.split(/[\\/]/).pop()}. Click "Use this" to write to it.`); }
+    catch (e) { say(e.message, "error"); } finally { setBusy(false); }
+  };
+  const openNew = () => {
+    const y = new Date().getFullYear(); const year = (s.workbook || "").includes(String(y)) ? y + 1 : y;
+    setMk({ name: suggestName(s.workbook, year), year: String(year), source: "current", use: true });
+  };
+  const create = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/api/workbooks/new", { name: mk.name, year: mk.year ? Number(mk.year) : null, source: mk.source, use: mk.use });
+      onSettings(r.settings); setBooks(r.workbooks); setMk(null);
+      say(`Created ${r.path.split(/[\\/]/).pop()}: ${r.sheets.join(", ")}${mk.use ? ". New payments go there now." : "."}`);
+    } catch (e) { say(e.message, "error"); } finally { setBusy(false); }
+  };
+  const cur = books?.find((b) => b.current);
+  return (
+    <Section title="Workbook" help="The Excel file payments are written to. CheckFlow saves a backup next to it (checkflow_backups) before every change. Payments stay linked to the workbook they were written to, so corrections to last year's payments still go to last year's file.">
+      <Stack spacing={2}>
+        <Box>
+          <Typography variant="caption" color="text.secondary">Writing to</Typography>
+          <Typography sx={{ fontWeight: 600, wordBreak: "break-all" }}>{(s.workbook || "").split(/[\\/]/).pop()}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-all" }}>{(s.workbook || "").replace(/[\\/][^\\/]*$/, "")}</Typography>
+        </Box>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+          {s.workbook_exists ? <Chip icon={<CheckCircleIcon />} color="success" variant="outlined" label="Found" /> : <Chip icon={<ErrorIcon />} color="error" variant="outlined" label="File not found" />}
+          {s.workbook_open && <Chip color="warning" label="Open in Excel right now" />}
+          {s.sheets.map((x) => <SheetChip key={x} sheet={x} />)}
+          {/Practice_Workbook/.test(s.workbook) && <Chip variant="outlined" label="Practice workbook" />}
+        </Stack>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button variant="contained" onClick={openNew}>New workbook</Button>
+          <Button component="label" variant="outlined" disabled={busy}>Upload workbook
+            <input hidden type="file" accept=".xlsx,.xlsm" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} /></Button>
+          {cur?.exists && <Button component="a" href={`/api/workbooks/download?path=${encodeURIComponent(cur.path)}`}>Download</Button>}
+          <Button onClick={async () => { if (window.confirm("Switch to a fresh practice workbook? Your real workbook isn't touched.")) { const r = await api.post("/api/settings/practice"); onSettings(r); } }}>Use a practice workbook</Button>
+        </Stack>
+
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: .5 }}>Available workbooks</Typography>
+          {!books ? <Typography variant="body2" color="text.secondary">Loading…</Typography> : (
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small">
+                <TableHead><TableRow><TableCell>Workbook</TableCell><TableCell>Changed</TableCell><TableCell align="right">Size</TableCell>
+                  <TableCell align="right">Payments sent</TableCell><TableCell /></TableRow></TableHead>
+                <TableBody>{books.map((b) => (
+                  <TableRow key={b.path} selected={b.current}>
+                    <TableCell sx={{ maxWidth: 340 }}>
+                      <Typography variant="body2" sx={{ fontWeight: b.current ? 600 : 400, wordBreak: "break-all" }}>{b.name}</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>{b.folder}</Typography>
+                    </TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>{b.exists ? whenText(b.modified) : <Typography variant="body2" color="error">Missing</Typography>}</TableCell>
+                    <TableCell align="right">{b.exists ? kb(b.size) : ""}</TableCell>
+                    <TableCell align="right">{b.payments || ""}</TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                      {b.open && <Chip size="small" color="warning" label="Open in Excel" sx={{ mr: 1 }} />}
+                      {b.current ? <Chip size="small" color="success" label="In use" /> : b.exists && <Button size="small" onClick={() => use(b)}>Use this</Button>}
+                      {b.exists && <Button size="small" component="a" href={`/api/workbooks/download?path=${encodeURIComponent(b.path)}`}>Download</Button>}
+                    </TableCell>
+                  </TableRow>))}
+                </TableBody>
+              </Table>
+            </Box>)}
+        </Box>
+
+        <TextField label="Sheets that aren't payee sheets (hidden)" value={draft.ignore_sheets || ""} onChange={set("ignore_sheets")} helperText="Comma separated, e.g. Sheet1, Sheet2, CARLOS OBISPO" />
+        {typed && <TextField label="Full path to the workbook" value={draft.workbook || ""} onChange={set("workbook")}
+          helperText="On a Mac: right-click the file in Finder, hold Option, choose 'Copy … as Pathname', paste here." />}
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" onClick={() => save(typed ? ["workbook", "ignore_sheets"] : ["ignore_sheets"])}>Save</Button>
+          {!typed && <Button onClick={() => setTyped(true)}>Type a path instead</Button>}
+        </Stack>
+      </Stack>
+
+      <Dialog open={!!mk} onClose={() => setMk(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>New workbook</DialogTitle>
+        {mk && <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            An empty workbook for a new period. Each payee sheet keeps its columns, colors, subtotal labels and spacing, with no payments in it.
+            Other sheets (client sheets, Sheet1…) are copied as they are. The workbook in use isn't changed.
+          </Typography>
+          <TextField label="Name" value={mk.name} onChange={(e) => setMk({ ...mk, name: e.target.value })} helperText={`Saved in ${folder}`} />
+          <TextField label="Year in the sheet titles" value={mk.year} onChange={(e) => setMk({ ...mk, year: e.target.value.replace(/\D/g, "").slice(0, 4) })}
+            helperText="Replaces the year in title rows like 'MAGIC VALLEY CONCRETE 2026'. Leave empty to keep them." />
+          <Box>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: .5 }}>Layout</Typography>
+            <ToggleButtonGroup size="small" exclusive value={mk.source} onChange={(_, v) => v && setMk({ ...mk, source: v })}>
+              <ToggleButton value="current">Like the workbook in use</ToggleButton>
+              <ToggleButton value="standard">Standard MVC / UPPER / RIO / VCP</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          <FormControlLabel control={<Switch checked={mk.use} onChange={(e) => setMk({ ...mk, use: e.target.checked })} />} label="Write new payments to it from now on" />
+        </Stack></DialogContent>}
+        <DialogActions><Button onClick={() => setMk(null)}>Cancel</Button>
+          <Button variant="contained" disabled={busy || !mk?.name?.trim()} onClick={create}>{busy ? "Creating…" : "Create workbook"}</Button></DialogActions>
+      </Dialog>
+    </Section>
+  );
+}
+
 export default function Settings({ me }) {
   const [s, setS] = useState(null);
   const [draft, setDraft] = useState({});
@@ -35,23 +156,7 @@ export default function Settings({ me }) {
     <Stack spacing={2.5}>
       <Box><Typography variant="h1">Settings <Triangles /></Typography><Typography color="text.secondary">Where payments are written, who can sign in, and how.</Typography></Box>
 
-      <Section title="Workbook" help="The Excel file the payee sheets live in. CheckFlow saves a backup next to it (checkflow_backups) before every change.">
-        <Stack spacing={2}>
-          <TextField label="Full path to the workbook" value={draft.workbook || ""} onChange={set("workbook")}
-            helperText="On a Mac: right-click the file in Finder, hold Option, choose 'Copy … as Pathname', paste here." />
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-            {s.workbook_exists ? <Chip icon={<CheckCircleIcon />} color="success" variant="outlined" label="Found" /> : <Chip icon={<ErrorIcon />} color="error" variant="outlined" label="File not found" />}
-            {s.workbook_open && <Chip color="warning" label="Open in Excel right now" />}
-            {s.sheets.map((x) => <SheetChip key={x} sheet={x} />)}
-            {/Practice_Workbook/.test(s.workbook) && <Chip variant="outlined" label="Practice workbook" />}
-          </Stack>
-          <TextField label="Sheets that aren't payee sheets (hidden)" value={draft.ignore_sheets || ""} onChange={set("ignore_sheets")} helperText="Comma separated, e.g. Sheet1, Sheet2, CARLOS OBISPO" />
-          <Stack direction="row" spacing={1}>
-            <Button variant="contained" onClick={() => save(["workbook", "ignore_sheets"])}>Save workbook</Button>
-            <Button onClick={async () => { if (window.confirm("Switch to a fresh practice workbook? Your real workbook isn't touched.")) { const r = await api.post("/api/settings/practice"); setS(r); setDraft(r); } }}>Use a practice workbook</Button>
-          </Stack>
-        </Stack>
-      </Section>
+      <Workbooks s={s} draft={draft} set={set} save={save} say={say} onSettings={(r) => { setS(r); setDraft(r); }} />
 
       <Section title="Deposit banks" help="Banks payments are deposited into, and the default for each payment method. Shown as choices on payments and in the ledger.">
         <Stack spacing={2}>

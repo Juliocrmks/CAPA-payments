@@ -44,7 +44,7 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    written and you're told to close it.
 3. **Ledger** (everyone; it is the source of truth, the workbook is written from it): search, quick period filters, sheet/method/taxable filters, group by day / week /
    month / quarter / company / sheet / method / deposit bank / taxable, sortable columns, subtotals, taxable totals
-   per deposit bank, CSV and **Excel export** (the rows on screen plus a daily bank totals sheet), page images.
+   per deposit bank, **CSV** (the rows on screen) and **Export Excel** (the whole ledger plus a daily bank totals sheet), page images.
    **AR users can download images** (one page, or every page of a payment as one PDF, named
    `2026-10-21_CUSTOMER_1068.00_p1.jpg`) for NetSuite, and change only Taxable. **Admins can correct any detail**
    of a sent payment (date, payee, customer, method, amount, refs, bank) from its side panel. Every edit takes the
@@ -66,7 +66,7 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    **Import Excel** (admin): add past payments from any spreadsheet. The payee workbook itself (day blocks, any
    year) or a plain table with Date, Customer and Amount columns (Method, Check #, Ticket, Payee, Deposit bank and
    Taxable are used when present; .csv works too). A preview shows rows per payee, what's already in the ledger
-   (same payee, day, client and amount: skipped), withdrawals left out, and dates that don't fit the rows around
+   (same payee, day, client and amount: skipped), negative rows (withdrawals, cash on hand, refunds) kept as negative amounts, and dates that don't fit the rows around
    them (a 2026 typed among 2025 rows is corrected by default). Each import is one batch with **Undo**. Imported
    rows never change the live workbook.
 4. **Analytics** (admin): one filter row (dates, day/week/month/quarter/year, payee, client, method) scopes
@@ -75,11 +75,19 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    by payee, client, method or deposit bank (share, change, trend, next-period estimate, how often a client usually
    pays), and **storylines**: plain-language findings such as the leader and biggest movers, client concentration,
    new clients, regular clients who have gone quiet, the shift to electronic payments and the projection.
-   Click a client or a storyline to focus on it. Every chart has a table view.
+   Click a client or a storyline to focus on it. Every chart has a table view. Analytics counts money received:
+   negative rows (withdrawals, cash on hand, refunds) stay in the ledger and its totals but are left out here.
 5. **Learned data** (admin): customers (import names from the workbook so scans snap to them), bank account →
    customer, division → sheet, banks, wire-posting text → customer. Everything confirmed is learned; everything is
    editable. **Import from workbook** can also bring past rows into the ledger once (optional migration).
 6. **Settings** (admin): workbook, deposit banks and per-method defaults, sign-in, users, activity log.
+
+   **Workbooks**: the list shows every workbook CheckFlow can use (its own `data/workbooks` folder, the practice
+   workbook, the folder of the workbook in use, and every workbook payments were written to) with **Use this** and
+   **Download**. **Upload workbook** brings a file onto the server. **New workbook** makes an empty one for a new
+   period: each payee sheet keeps its columns, colors, subtotal labels, group order and spacing with no payments
+   (other sheets are copied as they are), and the year in title rows can be changed. Payments stay linked to the
+   workbook they were written to: corrections, deletes and restores of last year's payments go to last year's file.
 
 ## Sign-in and users
 
@@ -123,7 +131,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (88 tests)
+tests/                     pytest suite (95 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

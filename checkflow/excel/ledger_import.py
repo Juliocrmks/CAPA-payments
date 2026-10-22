@@ -57,6 +57,8 @@ def _amount(v):
     m = money(s if "." in s else s + ".00")
     return (-m if neg else m) if m is not None else None
 
+def _money(v): return f"{'-' if v < 0 else ''}${abs(v):,.2f}"
+
 def _text(v):
     if v is None: return ""
     if isinstance(v, float) and v.is_integer(): v = int(v)
@@ -132,10 +134,19 @@ def read_file(path, filename, known_sheets, reg):
         records = [r for r in records if r["received"]]
         skipped += len(undated)
     if not records: raise ValueError("None of the rows has a date received.")
-    outflow = [r for r in records if float(r["amount"]) <= 0 or r["customer"].startswith(("WITHDRAWAL", "TRANSFER OUT"))]
-    if outflow:
-        records = [r for r in records if r not in outflow]
-        warnings.append(f"{len(outflow)} withdrawal / negative row{'s' if len(outflow) != 1 else ''} left out (not payments received).")
+    # Negative rows (withdrawals, cash on hand, refunds, reimbursements) are kept as negative amounts, as in the workbook.
+    zero = [r for r in records if float(r["amount"]) == 0]
+    if zero:
+        records = [r for r in records if float(r["amount"]) != 0]
+        skipped += len(zero)
+    neg = [r for r in records if float(r["amount"]) < 0]
+    if neg:
+        warnings.append(f"{len(neg)} negative row{'s' if len(neg) != 1 else ''} (withdrawals, cash on hand, refunds) "
+                        f"{'are' if len(neg) != 1 else 'is'} included as negative amounts, {_money(sum(float(r['amount']) for r in neg))} in all.")
+    odd = [r for r in records if float(r["amount"]) > 0 and _h(r["customer"]).startswith(("WITHDR", "WTHDR", "TRANSFEROUT"))]
+    for r in odd[:5]:
+        warnings.append(f"{r['sheet']} {r['received']}: '{r['customer']}' has a positive amount ({_money(float(r['amount']))}). "
+                        "It is imported as written; check its sign.")
     flag_dates(records)
     if skipped: warnings.append(f"{skipped} row{'s' if skipped != 1 else ''} skipped: missing a date, customer or amount.")
     blank = sum(1 for r in records if not r["sheet"])

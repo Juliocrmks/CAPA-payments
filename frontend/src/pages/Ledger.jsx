@@ -165,9 +165,9 @@ export default function Ledger({ me }) {
         </Box>
         {isAdmin && <Button startIcon={<UploadFileIcon />} variant="outlined" onClick={() => setImporting(true)}>Import Excel</Button>}
         {isAdmin && <Button startIcon={<DeleteOutlineIcon />} onClick={() => setDeletedOpen(true)}>Deleted</Button>}
-        <Button startIcon={<DownloadIcon />} disabled={!rows.length}
-          onClick={() => downloadPost("/api/ledger/export", { ids: groups.flatMap((g) => g.rows).map((r) => r.id) }, "checkflow-ledger.xlsx").catch((e) => say(e.message, "error"))}>Export Excel</Button>
-        <Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>CSV</Button>
+        <Tooltip title="The whole ledger, every payment, plus daily bank totals"><span><Button startIcon={<DownloadIcon />} disabled={!data.rows.length}
+          onClick={() => downloadPost("/api/ledger/export", {}, "checkflow-ledger.xlsx").catch((e) => say(e.message, "error"))}>Export Excel</Button></span></Tooltip>
+        <Tooltip title="Just the rows on screen (search and filters applied)"><span><Button startIcon={<DownloadIcon />} onClick={exportCsv} disabled={!rows.length}>CSV</Button></span></Tooltip>
       </Stack>
 
       {pendingCount > 0 && <Alert severity="warning" icon={<SyncProblemIcon />}>{pendingCount} change{pendingCount > 1 ? "s are" : " is"} waiting to be written to Excel. Close the workbook and they'll go through within 30 seconds.</Alert>}
@@ -351,7 +351,7 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheet
   const info = [["Received", fdate(f.received)], ["Customer", f.customer], ["Method", METHODS[f.method]], ["Amount", money(f.amount)], ["Ticket ref", f.ticket],
     ["Payment ref", f.payref], ["Order #", f.order], ["Check #", f.check_no], ["Check / paid date", fdate(f.doc_date)], ["Bank (drawn on)", f.bank],
     ["Routing", f.routing], ["Account", f.account], ["Card", f.card_brand && `${f.card_brand} ****${f.last4}`], ["Confirmation", f.confirmation],
-    ["Invoice", f.invoice], ["Bank posting", f.memo], ["Sent to Excel", `${fdate((r.submitted_at || "").slice(0, 10))} by ${r.submitted_by || "?"}`]].filter(([, v]) => v);
+    ["Invoice", f.invoice], ["Bank posting", f.memo], ["Sent to Excel", `${fdate((r.submitted_at || "").slice(0, 10))} by ${r.submitted_by || "?"}${r.workbook ? ` · ${r.workbook}` : ""}`]].filter(([, v]) => v);
   const readOnly = isAdmin ? info.filter(([k]) => ["Check / paid date", "Routing", "Account", "Card", "Bank posting", "Sent to Excel"].includes(k)) : info;
   const sheetOpts = (sheets.includes(r.sheet) || !r.sheet ? sheets : [r.sheet, ...sheets]).map((s) => [s, s]);
   return (

@@ -80,7 +80,7 @@ class Layout:
         ws, lo = self.ws, max(1, self.headers[-min(len(self.headers), 25)])
         sum_cols, labels, totals = Counter(), {}, Counter()
         orders = Counter()
-        gaps = Counter(); block_gap = Counter(); has_total = Counter()
+        gaps = Counter(); tgaps = Counter(); block_gap = Counter(); has_total = Counter()
         prev_end = None
         for bi, h in enumerate([x for x in self.headers if x >= lo]):
             nxt = next((x for x in self.headers if x > h), last_row(ws) + 1)
@@ -96,6 +96,10 @@ class Layout:
                             labels.setdefault(g, Counter())[H(lab)] += 1
                             seq.append(g)
                             if last_entry: gaps[r - last_entry - 1] += 1
+                            else:                       # template block (new workbook): one empty entry slot + the gap rows
+                                k, rr = 0, r - 1
+                                while rr > h and not self.used(rr): k, rr = k + 1, rr - 1
+                                if k >= 1: tgaps[k - 1] += 1
                         elif "TOTAL" in H(lab):
                             totals[H(lab)] += 1; saw_total = True
                         break
@@ -112,7 +116,7 @@ class Layout:
         self.total_label = totals.most_common(1)[0][0] if totals else "TOTAL"
         best = orders.most_common(1)[0][0] if orders else ()
         self.order = list(best) + [g for g in ("credit", "check", "cash") if g not in best]
-        self.gap_before_subtotal = gaps.most_common(1)[0][0] if gaps else 0
+        self.gap_before_subtotal = gaps.most_common(1)[0][0] if gaps else (tgaps.most_common(1)[0][0] if tgaps else 0)
         self.gap_between_blocks = block_gap.most_common(1)[0][0] if block_gap else 1
         self.gap_before_subtotal = min(self.gap_before_subtotal, 2)
         self.gap_between_blocks = min(self.gap_between_blocks, 3)

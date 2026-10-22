@@ -5,6 +5,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Res
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from . import db, auth, config
 from .auth import require_user, require_admin, require_perm, can
 from .excel import writer, importer
@@ -229,6 +230,113 @@ def practice(me_=Depends(require_admin)):
     from .excel.practice import make_practice
     p = os.path.join(config.DATA, "Practice_Workbook.xlsx"); make_practice(p); db.set_setting("workbook", p)
     return get_settings()
+
+# ------------------------------------------------------------------ workbooks
+# Which workbooks are there to pick from: CheckFlow's own folder (created / uploaded), the practice one, the folder of
+# the workbook in use (e.g. next to the real file on a Mac) and every workbook payments were written to.
+import re as _re
+XL = (".xlsx", ".xlsm")
+
+def _book_dirs():
+    return list(dict.fromkeys([config.WORKBOOKS, config.DATA, os.path.dirname(workbook_path())]))
+
+def _books():
+    cur, counts, seen, out = workbook_path(), db.workbook_counts(), set(), []
+    paths = []
+    for d in _book_dirs():
+        try: paths += [os.path.join(d, n) for n in sorted(os.listdir(d))]
+        except OSError: pass
+    paths += list(counts) + [cur]
+    for p in paths:
+        if not p or not os.path.isabs(p): continue      # e.g. 'upload:...' tags of imported rows
+        p = os.path.normpath(p); n = os.path.basename(p)
+        if p in seen or not n.lower().endswith(XL) or n.startswith(("~$", ".")): continue
+        seen.add(p)
+        ex = os.path.isfile(p); st = os.stat(p) if ex else None
+        out.append(dict(path=p, name=n, folder=os.path.dirname(p), exists=ex, size=st.st_size if st else 0,
+                        modified=datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="minutes") if st else "",
+                        current=p == os.path.normpath(cur), open=os.path.exists(writer.lock_path(p)), payments=counts.get(p, 0),
+                        practice=n == "Practice_Workbook.xlsx" and os.path.dirname(p) == os.path.normpath(config.DATA)))
+    out.sort(key=lambda b: (not b["current"], b["practice"], -(datetime.datetime.fromisoformat(b["modified"]).timestamp() if b["modified"] else 0)))
+    return out
+
+def _listed(path):
+    p = os.path.normpath(path) if path and os.path.isabs(path) else ""
+    b = next((b for b in _books() if p and b["path"] == p), None)
+    if not b: raise HTTPException(404, "That workbook isn't in the list.")
+    return b
+
+def _new_book_dir():
+    d = os.path.dirname(os.path.normpath(workbook_path()))
+    return config.WORKBOOKS if d == os.path.normpath(config.DATA) else d
+
+def _clean_name(name):
+    n = _re.sub(r'[\\/:*?"<>|\x00-\x1f]', "", (name or "")).strip().strip(".")
+    if not n: raise HTTPException(400, "Give the workbook a name.")
+    return n if n.lower().endswith(XL) else n + ".xlsx"
+
+@app.get("/api/workbooks")
+def list_workbooks(_=Depends(require_admin)):
+    return dict(workbooks=_books(), new_folder=_new_book_dir())
+
+class PickBook(BaseModel):
+    path: str
+
+@app.post("/api/workbooks/select")
+def select_workbook(b: PickBook, me_=Depends(require_admin)):
+    w = _listed(b.path)
+    if not w["exists"]: raise HTTPException(400, "That workbook file isn't there anymore.")
+    db.set_setting("workbook", w["path"]); db.audit(me_["username"], "workbook_selected", file=w["name"])
+    return dict(settings=get_settings(), workbooks=_books())
+
+class NewBook(BaseModel):
+    name: str
+    year: Optional[int] = None
+    source: str = "current"          # current: copy the layout of the workbook in use | standard: CAPA's standard layout
+    use: bool = True
+
+@app.post("/api/workbooks/new")
+def new_workbook(b: NewBook, me_=Depends(require_admin)):
+    name = _clean_name(b.name)
+    folder = _new_book_dir(); os.makedirs(folder, exist_ok=True)
+    dst = os.path.join(folder, name)
+    if os.path.exists(dst): raise HTTPException(409, f"There's already a workbook called {name} in that folder.")
+    if b.year is not None and not 1990 <= b.year <= 2100: raise HTTPException(400, "Year looks wrong.")
+    if b.source == "standard":
+        from .excel.practice import make_practice
+        import tempfile
+        src = os.path.join(tempfile.mkdtemp(), "standard.xlsx"); make_practice(src); ignore = ["Sheet1"]
+    else:
+        src, ignore = workbook_path(), ignore_list()
+    try:
+        with WB_LOCK: res = writer.new_workbook(src, dst, year=b.year, ignore=ignore)
+    except writer.WorkbookError as e: raise HTTPException(400, str(e))
+    if b.use: db.set_setting("workbook", dst)
+    db.audit(me_["username"], "workbook_created", file=name, source=b.source, year=b.year, sheets=res["sheets"])
+    return dict(res, path=dst, settings=get_settings(), workbooks=_books())
+
+@app.post("/api/workbooks/upload")
+async def upload_workbook(file: UploadFile = File(...), me_=Depends(require_admin)):
+    name = _clean_name(file.filename)
+    os.makedirs(config.WORKBOOKS, exist_ok=True)
+    base, ext = os.path.splitext(name); dst, i = os.path.join(config.WORKBOOKS, name), 2
+    while os.path.exists(dst): dst, i = os.path.join(config.WORKBOOKS, f"{base} ({i}){ext}"), i + 1
+    data = await file.read()
+    if len(data) > 80 * 1024 * 1024: raise HTTPException(400, "That file is over 80 MB.")
+    with open(dst, "wb") as f: f.write(data)
+    try: sheets_ = writer.list_sheets(dst)
+    except Exception:
+        os.remove(dst); raise HTTPException(400, "That file isn't an Excel workbook CheckFlow can open (.xlsx or .xlsm).")
+    db.audit(me_["username"], "workbook_uploaded", file=os.path.basename(dst))
+    return dict(path=dst, sheets=sheets_, workbooks=_books())
+
+@app.get("/api/workbooks/download")
+def download_workbook(path: str = Query(...), me_=Depends(require_admin)):
+    w = _listed(path)
+    if not w["exists"]: raise HTTPException(404, "That workbook file isn't there anymore.")
+    db.audit(me_["username"], "workbook_downloaded", file=w["name"])
+    return FileResponse(w["path"], filename=w["name"],
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 class LdapTest(BaseModel):
     username: str
@@ -481,17 +589,18 @@ def submit(s: Submit, user=Depends(require_admin)):
     for sheet, _ in written.values(): per[sheet] = per.get(sheet, 0) + 1
     return dict(written=len(written), sheets=per, skipped=skipped, workbook=workbook_path())
 
-def _relocate(days):
+def _relocate(days, path=None):
     """After a day block is rebuilt, earlier rows of that day moved: refresh the remembered row numbers."""
     import openpyxl
     from .excel.layout import Layout
-    try: wb = openpyxl.load_workbook(workbook_path(), read_only=False)
+    path = path or workbook_path()
+    try: wb = openpyxl.load_workbook(path, read_only=False)
     except Exception: return
     upd = {}
     for sheet, day in days:
         if sheet not in wb.sheetnames: continue
         lay = Layout(wb[sheet])
-        for p in db.submitted_on(sheet, day):
+        for p in db.submitted_on(sheet, day, path):
             r = writer.find_row(lay, p["fields"], p["row"])
             if r and r != p["row"]: upd[p["id"]] = r
     db.set_rows(upd)
@@ -511,28 +620,38 @@ EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo"]
 WB_OPEN = "The workbook is open in Excel. Your change is saved and will be written automatically once it is closed."
 
 def push_to_excel():
+    """Write queued ledger changes. Each payment goes back to the workbook it was written to, so corrections to last
+    year's payments land in last year's file even after a new workbook is selected."""
     rows = db.dirty_rows()
     if not rows: return 0, ""
     pick = lambda f: {k: f.get(k, "") for k in EXCEL_KEYS}
-    items = [dict(id=r["id"], row=r["row"], op=r["op"], old=pick(r["excel"]), new=pick(r["fields"])) for r in rows]
-    try:
-        with WB_LOCK: res = writer.sync_rows(workbook_path(), items)
-    except writer.WorkbookError as e:
-        msg = WB_OPEN if "open in Excel" in str(e) else str(e)
-        for r in rows: db.sync_result(r["id"], note=msg)
-        return len(rows), msg
-    left, msg, moved = 0, "", set()
-    fields = {r["id"]: r["fields"] for r in rows}
-    for pid, out in res.items():
-        if out[0] == "removed":
-            db.sync_result(pid, removed=True)
-        elif out[0] == "ok":
-            _, sheet, row, mv = out
-            db.sync_result(pid, row=row, sheet=sheet, fields=fields[pid])
-            if mv: moved.add((sheet, fields[pid].get("received")))
-        else:
-            db.sync_result(pid, note=out[1]); left += 1; msg = out[1]
-    if moved: _relocate(moved)
+    by_book = {}
+    for r in rows: by_book.setdefault(r["workbook"] or workbook_path(), []).append(r)
+    left, msg = 0, ""
+    for path, rs in by_book.items():
+        if not os.path.exists(path):
+            m = f"Its workbook ({os.path.basename(path)}) isn't there anymore, so Excel can't be updated."
+            for r in rs: db.sync_result(r["id"], note=m)
+            left, msg = left + len(rs), m; continue
+        items = [dict(id=r["id"], row=r["row"], op=r["op"], old=pick(r["excel"]), new=pick(r["fields"])) for r in rs]
+        try:
+            with WB_LOCK: res = writer.sync_rows(path, items)
+        except writer.WorkbookError as e:
+            m = WB_OPEN if "open in Excel" in str(e) else str(e)
+            for r in rs: db.sync_result(r["id"], note=m)
+            left, msg = left + len(rs), m; continue
+        moved = set()
+        fields = {r["id"]: r["fields"] for r in rs}
+        for pid, out in res.items():
+            if out[0] == "removed":
+                db.sync_result(pid, removed=True)
+            elif out[0] == "ok":
+                _, sheet, row, mv = out
+                db.sync_result(pid, row=row, sheet=sheet, fields=fields[pid])
+                if mv: moved.add((sheet, fields[pid].get("received")))
+            else:
+                db.sync_result(pid, note=out[1]); left += 1; msg = out[1]
+        if moved: _relocate(moved, path)
     return left, msg
 
 def _clean_edit(before, body, user):
@@ -547,7 +666,7 @@ def _clean_edit(before, body, user):
     if "amount" in new:
         try: amt = float(new["amount"].replace(",", "").replace("$", ""))
         except ValueError: raise HTTPException(400, "Amount must be a number.")
-        if amt <= 0: raise HTTPException(400, "Amount must be more than zero.")
+        if amt == 0: raise HTTPException(400, "Amount can't be zero (use a negative amount for a refund or reimbursement).")
         new["amount"] = f"{amt:.2f}"
     if "received" in new:
         try: datetime.date.fromisoformat(new["received"])
@@ -612,7 +731,8 @@ class ExportReq(BaseModel):
 
 @app.post("/api/ledger/export")
 def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
-    """The ledger (what's on screen: the ids sent) as an Excel file, plus daily totals per deposit bank."""
+    """The ledger as an Excel file, plus daily totals per deposit bank. No ids: the whole ledger (the Export Excel button);
+    ids: just those rows."""
     from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment

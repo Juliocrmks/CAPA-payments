@@ -35,6 +35,7 @@ def load():
             amt = float(str(f.get("amount") or "").replace(",", "").replace("$", ""))
         except ValueError:
             continue
+        if amt <= 0: continue        # analytics is money received: withdrawals, cash on hand and refunds stay in the ledger only
         out.append(dict(date=d, amount=amt, sheet=(r["sheet"] or f.get("sheet") or "").upper() or "(none)",
                         customer=" ".join((f.get("customer") or "").upper().split()) or "(no name)",
                         method=f.get("method") if f.get("method") in METHOD_LABEL else "check",

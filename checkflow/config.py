@@ -4,6 +4,7 @@ import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.environ.get("CHECKFLOW_DATA", os.path.join(ROOT, "data"))
 IMAGES = os.path.join(DATA, "images")
+WORKBOOKS = os.path.join(DATA, "workbooks")       # workbooks created or uploaded in CheckFlow
 DB_PATH = os.path.join(DATA, "checkflow.db")
 STATIC = os.environ.get("CHECKFLOW_STATIC", os.path.join(ROOT, "static"))
 
