@@ -294,6 +294,8 @@ def _entry_snapshot(lay, tpl, it):
             else:
                 vals[cols["payref"]] = num_or_text(it["payref"])
     if "taxable" in cols and it.get("taxable") in ("Yes", "No"): vals[cols["taxable"]] = it["taxable"].upper()
+    elif "taxable" in cols and it.get("taxable") == "Partial":       # split by invoice: part of the payment is taxable
+        vals[cols["taxable"]] = f"PARTIAL {float(it.get('taxable_amount') or 0):,.2f}"
     col = lay.amount_cols.get(g) or lay.amount_cols.get("credit") or lay.cols["check"]
     vals[col] = round(float(it["amount"]), 2)
     if "bank" in cols and it.get("deposit_bank"): vals[cols["bank"]] = it["deposit_bank"].upper()
@@ -400,7 +402,8 @@ def find_row(lay, it, hint=None):
         if ok(r): return r
     return None
 
-FIELD_COL = {"customer": "customer", "order": "order", "ticket": "ticket", "payref": "payref", "taxable": "taxable", "deposit_bank": "bank"}
+FIELD_COL = {"customer": "customer", "order": "order", "ticket": "ticket", "payref": "payref", "taxable": "taxable", "taxable_amount": "taxable",
+             "deposit_bank": "bank"}
 
 def _rewrite_row(lay, r, it, keys):
     """Same sheet, day and method group: write only the changed fields into the row where it already is, so
@@ -425,7 +428,7 @@ def _empty_row(lay, r):
     for c in range(1, MAXC):
         lay.ws.cell(r, c).value = None
 
-EXCEL_FIELDS = ("sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "deposit_bank")
+EXCEL_FIELDS = ("sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "taxable_amount", "deposit_bank")
 
 def sync_rows(path, items):
     """Apply ledger edits to rows already in the workbook. items: [{id, row, old, new}] where old = the values last

@@ -168,7 +168,7 @@ def registry():
 
 # ------------------------------------------------------------------ payments
 KEYS = ["method", "customer", "payee", "sheet", "received", "doc_date", "amount", "ticket", "order", "payref", "check_no",
-        "routing", "account", "bank", "card_brand", "last4", "confirmation", "invoice", "taxable", "deposit_bank", "memo", "customer_raw"]
+        "routing", "account", "bank", "card_brand", "last4", "confirmation", "invoice", "taxable", "taxable_amount", "deposit_bank", "memo", "customer_raw"]
 
 def blank_fields():
     return {k: "" for k in KEYS} | {"method": "check"}

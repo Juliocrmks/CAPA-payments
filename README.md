@@ -53,6 +53,12 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
    and its old row is emptied, so no rows shift and every `=SUM` stays right.
 
+   **Split by invoice** (AR, admin): when one payment pays several invoices (a 10,000 check for invoices of 2,000,
+   4,000 and 4,000) and not all are taxable, *Taxable → Split by invoice…* lists each invoice with its amount and
+   Taxable yes/no. The invoices must add up to the payment. Taxable becomes *Partial* with the taxable amount; the
+   ledger stats, daily bank totals, group subtotals and exports use the amounts; the workbook's TAXABLE cell reads
+   `PARTIAL 6,000.00`. Choosing plain Yes / No later replaces the split.
+
    **Attachments** (admin and AR): add pages to a sent payment at any time (a 3-page card authorization, a photo of a
    paper receipt; PDF or image). They are kept with the payment, viewable and downloadable, never read or processed.
 
@@ -139,7 +145,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (99 tests)
+tests/                     pytest suite (100 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

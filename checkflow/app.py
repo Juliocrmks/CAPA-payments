@@ -445,7 +445,7 @@ def sync_workbook(r: SyncReq, me_=Depends(require_admin)):
             for x, s in st["led"]:
                 f = x["fields"]
                 items[s].append(dict(id=x["id"], sheet=s, **{k: f.get(k, "") for k in ("received", "customer", "order", "ticket", "payref",
-                                                                                          "method", "amount", "taxable", "deposit_bank")}))
+                                                                                          "method", "amount", "taxable", "taxable_amount", "deposit_bank")}))
             for s in items: items[s].sort(key=lambda it: (it["received"], st["pos"].get(it["id"], 10 ** 9), it["id"]))
             placed = writer.rebuild_sheets(st["path"], items)
         except writer.WorkbookError as e: raise HTTPException(409, str(e))
@@ -741,7 +741,7 @@ def submit(s: Submit, user=Depends(require_admin)):
         if not target: skipped.append(dict(id=pid, reason=f"Sheet '{f['sheet']}' is not in the workbook.")); continue
         if (p["warns"].get("duplicate") or "").startswith("Already sent"): skipped.append(dict(id=pid, reason=p["warns"]["duplicate"])); continue
         items.append(dict(id=pid, **{k: f.get(k, "") for k in ("received", "customer", "order", "ticket", "payref", "method",
-                                                                 "amount", "taxable", "deposit_bank")}, sheet=target))
+                                                                 "amount", "taxable", "taxable_amount", "deposit_bank")}, sheet=target))
     written = {}
     if items:
         path = workbook_path()
@@ -786,7 +786,7 @@ def ledger(user=Depends(require_perm("ledger.view"))):
 
 # Ledger edits: AR may set Taxable; admins may correct any field of a payment already sent to Excel.
 # Every edit takes the same road: saved at once, row queued, written to the workbook now or by the 30 s retry loop.
-EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "deposit_bank"]
+EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "taxable_amount", "deposit_bank"]
 EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo"]
 WB_OPEN = "The workbook is open in Excel. Your change is saved and will be written automatically once it is closed."
 
@@ -863,10 +863,15 @@ def ledger_patch(pid: int, body: dict, user=Depends(require_user)):
     before = db.get_payment(pid)
     if not before or before["status"] != "submitted": raise HTTPException(404, "Payment not found in the ledger.")
     ch = _clean_edit(before, body, user)
+    if "taxable" in body and before["fields"].get("invoices"):     # a plain Yes / No / blank replaces an invoice split
+        ch.update(taxable=body["taxable"] or "", invoices=[], taxable_amount="")
     if not ch: return dict(ok=True, changed=[], excel="unchanged", message="")
     db.set_ledger(pid, **ch)
     db.audit(user["username"], "ledger_edit", pid, **{k: [before["fields"].get(k, ""), v] for k, v in ch.items()})
     if "customer" in ch: db.registry().learn(db.get_payment(pid)["fields"])
+    return _excel_after_edit(pid, before, ch)
+
+def _excel_after_edit(pid, before, ch):
     exc = before.get("excel") or {}
     if not exc.get("row") or not any(k in EXCEL_KEYS for k in ch):
         if not exc.get("pending"): db.sync_result(pid)          # nothing for Excel (an earlier queued change still waits)
@@ -876,6 +881,57 @@ def ledger_patch(pid: int, body: dict, user=Depends(require_user)):
     pending = bool((after.get("excel") or {}).get("pending"))
     return dict(ok=True, changed=sorted(ch), excel="pending" if pending else "synced", message=msg if pending else "",
                 sheet=(after.get("excel") or {}).get("sheet"), row=(after.get("excel") or {}).get("row"))
+
+# A payment that covers several invoices (one 10,000 check for invoices of 2,000 / 4,000 / 4,000), not all taxable:
+# AR splits it by invoice. The invoices must add up to the payment; Taxable becomes Yes, No or Partial (+ the amount).
+class InvoiceLine(BaseModel):
+    invoice: str
+    amount: str
+    taxable: str
+
+class InvoiceSplit(BaseModel):
+    lines: list[InvoiceLine] = []
+
+def tax_parts(f):
+    """-> (taxable, not taxable, not set) amounts of one payment."""
+    try: a = float(str(f.get("amount") or 0).replace(",", "") or 0)
+    except ValueError: a = 0.0
+    t = f.get("taxable") or ""
+    if t == "Partial":
+        try: x = float(f.get("taxable_amount") or 0)
+        except ValueError: x = 0.0
+        return x, a - x, 0.0
+    return (a, 0.0, 0.0) if t == "Yes" else (0.0, a, 0.0) if t == "No" else (0.0, 0.0, a)
+
+@app.post("/api/ledger/{pid}/invoices")
+def ledger_invoices(pid: int, s: InvoiceSplit, user=Depends(require_perm("taxable.edit"))):
+    before = db.get_payment(pid)
+    if not before or before["status"] != "submitted": raise HTTPException(404, "Payment not found in the ledger.")
+    f = before["fields"]
+    lines = []
+    for k, ln in enumerate(s.lines, 1):
+        inv = " ".join(ln.invoice.split()).upper()[:40]
+        if not inv: raise HTTPException(400, f"Invoice {k}: type the invoice number.")
+        try: amt = round(float(ln.amount.replace(",", "").replace("$", "").strip()), 2)
+        except ValueError: raise HTTPException(400, f"Invoice {inv}: the amount isn't a number.")
+        if amt <= 0: raise HTTPException(400, f"Invoice {inv}: the amount must be more than zero.")
+        if ln.taxable not in ("Yes", "No"): raise HTTPException(400, f"Invoice {inv}: choose taxable Yes or No.")
+        lines.append(dict(invoice=inv, amount=f"{amt:.2f}", taxable=ln.taxable))
+    if lines:
+        if len(lines) < 2: raise HTTPException(400, "Split a payment only when it pays two or more invoices.")
+        if len({l["invoice"] for l in lines}) < len(lines): raise HTTPException(400, "The same invoice is listed twice.")
+        total, pay = round(sum(float(l["amount"]) for l in lines), 2), round(float(f.get("amount") or 0), 2)
+        if abs(total - pay) > 0.004:
+            raise HTTPException(400, f"The invoices add up to ${total:,.2f}; the payment is ${pay:,.2f}.")
+        tx = round(sum(float(l["amount"]) for l in lines if l["taxable"] == "Yes"), 2)
+        taxable = "Yes" if tx == pay else "No" if tx == 0 else "Partial"
+        ch = dict(invoices=lines, taxable=taxable, taxable_amount=f"{tx:.2f}" if taxable == "Partial" else "",
+                  invoice=", ".join(l["invoice"] for l in lines))
+    else:                                                          # remove the split; Taxable goes back to not set
+        ch = dict(invoices=[], taxable="", taxable_amount="")
+    db.set_ledger(pid, **ch)
+    db.audit(user["username"], "invoice_split", pid, invoices=len(lines), taxable=ch["taxable"], taxable_amount=ch["taxable_amount"])
+    return _excel_after_edit(pid, before, ch)
 
 class LedgerDelete(BaseModel):
     reason: str = ""
@@ -917,23 +973,28 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     num = lambda v: float(str(v or 0).replace(",", "") or 0)
     meth = {"check": "Check", "cash": "Cash", "card": "Credit card", "ach": "ACH", "wire": "Wire"}
     wb = Workbook(); ws = wb.active; ws.title = "Ledger"
-    head = ["Received", "Customer", "Payee", "Method", "Ticket ref", "Payment ref", "Order #", "Amount", "Taxable", "Deposit bank",
-            "Check #", "Bank (drawn on)", "Invoice", "Pages", "Excel row"]
+    head = ["Received", "Customer", "Payee", "Method", "Ticket ref", "Payment ref", "Order #", "Amount", "Taxable", "Taxable amount",
+            "Not taxable amount", "Deposit bank", "Check #", "Bank (drawn on)", "Invoice", "Invoice split", "Pages", "Excel row"]
     ws.append(head)
     for x in rows:
         f = x["fields"]
+        tx, ntx, _ = tax_parts(f)
+        split = "; ".join(f"{l['invoice']} {float(l['amount']):,.2f} {'taxable' if l['taxable'] == 'Yes' else 'not taxable'}"
+                          for l in (f.get("invoices") or []))
         ws.append([f.get("received"), f.get("customer"), x.get("sheet"), meth.get(f.get("method"), f.get("method")), f.get("ticket"), f.get("payref"),
-                   f.get("order"), num(f.get("amount")), f.get("taxable"), f.get("deposit_bank"), f.get("check_no"), f.get("bank"), f.get("invoice"),
+                   f.get("order"), num(f.get("amount")), f.get("taxable"), round(tx, 2) if f.get("taxable") else None,
+                   round(ntx, 2) if f.get("taxable") else None, f.get("deposit_bank"), f.get("check_no"), f.get("bank"), f.get("invoice"), split,
                    len(x.get("pages") or []), x.get("row")])
     n = len(rows) + 1
-    ws.append(["Total", "", "", "", "", "", "", f"=SUBTOTAL(9,H2:H{n})"])
+    ws.append(["Total", "", "", "", "", "", "", f"=SUBTOTAL(9,H2:H{n})", "", f"=SUBTOTAL(9,J2:J{n})", f"=SUBTOTAL(9,K2:K{n})"])
     bold, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="381F12")
     for c in ws[1]: c.font, c.fill = bold, fill
     for c in ws[n + 1]: c.font = Font(bold=True)
-    for row in ws.iter_rows(min_row=2, min_col=8, max_col=8):
-        for c in row: c.number_format = "#,##0.00"
-    for col, w in zip("ABCDEFGHIJKLMNO", (12, 34, 9, 12, 11, 14, 11, 14, 9, 13, 11, 22, 12, 7, 9)): ws.column_dimensions[col].width = w
-    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:O{n}"
+    for row in ws.iter_rows(min_row=2, min_col=8, max_col=11):
+        for c in row:
+            if c.column != 9: c.number_format = "#,##0.00"
+    for col, w in zip("ABCDEFGHIJKLMNOPQR", (12, 34, 9, 12, 11, 14, 11, 14, 9, 14, 16, 13, 11, 22, 16, 40, 7, 9)): ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:R{n}"
     # daily totals per deposit bank (the cashier's view)
     t = wb.create_sheet("Daily bank totals")
     t.append(["Day", "Deposit bank", "Payments", "Cash", "Checks", "Card / ACH / wire", "Total", "Taxable", "Not taxable", "Taxable not set"])
@@ -942,7 +1003,7 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
         f = x["fields"]; k = (f.get("received") or "", f.get("deposit_bank") or "No deposit bank")
         a = agg.setdefault(k, [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]); v = num(f.get("amount"))
         a[0] += 1; a[1 if f.get("method") == "cash" else 2 if f.get("method") == "check" else 3] += v; a[4] += v
-        a[5 if f.get("taxable") == "Yes" else 6 if f.get("taxable") == "No" else 7] += v
+        tx, ntx, unset = tax_parts(f); a[5] += tx; a[6] += ntx; a[7] += unset
     for (day, bank), a in sorted(agg.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True):
         t.append([day, bank, *a])
     for c in t[1]: c.font, c.fill = bold, fill

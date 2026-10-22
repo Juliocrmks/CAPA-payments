@@ -75,6 +75,8 @@ def history_ws(ws):
         method = method_of[g]
         if g == "credit" and ticket.upper() == "WIRE": method, ticket = "wire", ""
         tax = val("taxable").upper()
+        part = re.match(r"PARTIAL\s*\$?\s*([\d,]+(?:\.\d+)?)", tax)          # written by CheckFlow for a payment split by invoice
         yield dict(sheet=ws.title, row=r, received=d or "", customer=val("customer").upper(), order=val("order"),
                    ticket=ticket, payref=val("payref"), method=method, amount=f"{float(ws.cell(r, amount_cols[g]).value):.2f}",
-                   taxable={"YES": "Yes", "NO": "No"}.get(tax, ""), deposit_bank=val("bank").upper())
+                   taxable="Partial" if part else {"YES": "Yes", "NO": "No"}.get(tax, ""),
+                   taxable_amount=f"{float(part.group(1).replace(',', '')):.2f}" if part else "", deposit_bank=val("bank").upper())

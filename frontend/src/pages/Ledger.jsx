@@ -17,7 +17,7 @@ import AttachFileIcon from "@mui/icons-material/AttachFile";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ImportExcelDialog from "../components/ImportExcelDialog";
 import DayBankTotals from "../components/DayBankTotals";
-import { api, money, num, fdate, METHODS, todayIso, downloadPost } from "../api";
+import { api, money, num, fdate, METHODS, todayIso, downloadPost, taxParts } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
 
@@ -50,7 +50,7 @@ function groupKey(r, g) {
     case "sheet": return [r.sheet || "", r.sheet || "No sheet"];
     case "method": return [f.method, METHODS[f.method] || f.method];
     case "deposit_bank": return [f.deposit_bank || "", f.deposit_bank || "No deposit bank"];
-    case "taxable": return [f.taxable || "~", f.taxable === "Yes" ? "Taxable" : f.taxable === "No" ? "Not taxable" : "Taxable not set"];
+    case "taxable": return [f.taxable || "~", f.taxable === "Yes" ? "Taxable" : f.taxable === "No" ? "Not taxable" : f.taxable === "Partial" ? "Partly taxable (split by invoice)" : "Taxable not set"];
     default: return ["all", "All payments"];
   }
 }
@@ -64,6 +64,7 @@ export default function Ledger({ me }) {
   const canAttach = isAdmin || me.role === "ar";              // add / remove attachments (never scanned pages)
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [splitFor, setSplitFor] = useState(null);
   const [xlMenu, setXlMenu] = useState(null);
   const [data, setData] = useState(null);
   const [q, setQ] = useState("");
@@ -99,8 +100,8 @@ export default function Ledger({ me }) {
       if (to && d > to) return false;
       if (sheets.length && !sheets.includes(r.sheet)) return false;
       if (methods.length && !methods.includes(f.method)) return false;
-      if (tax === "yes" && f.taxable !== "Yes") return false;
-      if (tax === "no" && f.taxable !== "No") return false;
+      if (tax === "yes" && f.taxable !== "Yes" && f.taxable !== "Partial") return false;
+      if (tax === "no" && f.taxable !== "No" && f.taxable !== "Partial") return false;
       if (tax === "unset" && f.taxable) return false;
       if (onlyPending && !r.pending) return false;
       if (!needle) return true;
@@ -124,9 +125,9 @@ export default function Ledger({ me }) {
 
   const totals = useMemo(() => {
     const t = { all: 0, taxable: 0, notTaxable: 0, unset: 0, byBank: {} };
-    rows.forEach((r) => { const a = num(r.fields.amount); t.all += a;
-      if (r.fields.taxable === "Yes") { t.taxable += a; const b = r.fields.deposit_bank || "No bank"; t.byBank[b] = (t.byBank[b] || 0) + a; }
-      else if (r.fields.taxable === "No") t.notTaxable += a; else t.unset += 1; });
+    rows.forEach((r) => { const a = num(r.fields.amount); t.all += a; const p = taxParts(r.fields);
+      if (p.tax) { t.taxable += p.tax; const b = r.fields.deposit_bank || "No bank"; t.byBank[b] = (t.byBank[b] || 0) + p.tax; }
+      t.notTaxable += p.non; if (p.unset) t.unset += 1; });
     return t;
   }, [rows]);
 
@@ -149,9 +150,9 @@ export default function Ledger({ me }) {
   };
 
   const exportCsv = () => {
-    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Deposit bank", "Check date", "Bank", "Excel row"];
+    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Taxable amount", "Deposit bank", "Check date", "Bank", "Invoice", "Excel row"];
     const lines = [head].concat(groups.flatMap((g) => g.rows).map((r) => { const f = r.fields;
-      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.deposit_bank, f.doc_date, f.bank, r.row]; }));
+      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.taxable ? taxParts(f).tax.toFixed(2) : "", f.deposit_bank, f.doc_date, f.bank, f.invoice, r.row]; }));
     const csv = lines.map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `checkflow-ledger-${todayIso()}.csv`; a.click();
@@ -238,7 +239,7 @@ export default function Ledger({ me }) {
             {groups.map((g, gi) => {
               const isClosed = closed[g.key] ?? (groups.length > 14 && gi >= 10);
               const sub = g.rows.reduce((s, r) => s + num(r.fields.amount), 0);
-              const subTax = g.rows.filter((r) => r.fields.taxable === "Yes").reduce((s, r) => s + num(r.fields.amount), 0);
+              const subTax = g.rows.reduce((s, r) => s + taxParts(r.fields).tax, 0);
               const limit = more[g.key] ? Infinity : 60;
               return [
                 group !== "none" && (
@@ -248,7 +249,7 @@ export default function Ledger({ me }) {
                     <TableCell align="right"><b>{money(sub)}</b></TableCell>
                     <TableCell colSpan={3} />
                   </TableRow>),
-                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} />)),
+                ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} onSplit={setSplitFor} />)),
                 !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={12} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
               ];
             })}
@@ -258,9 +259,10 @@ export default function Ledger({ me }) {
           </TableBody>
         </Table>}
       </Paper>
-      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)}
+      <DetailDrawer r={detail} isAdmin={isAdmin} canTax={canTax} canDownload={canDownload} canAttach={canAttach} banks={data.deposit_banks} sheets={data.sheets} onClose={() => setDetail(null)} onSplit={setSplitFor}
         say={say} onChanged={load} onDeleted={() => { setDetail(null); load(); }}
         onEdit={async (r, k, v) => { const ok = await edit(r, k, v); if (ok) setDetail((d) => d && { ...d, fields: { ...d.fields, [k]: v }, ...(k === "sheet" ? { sheet: v } : {}) }); return ok; }} />
+      {canTax && splitFor && <InvoiceSplitDialog r={splitFor} onClose={() => setSplitFor(null)} onSaved={(m) => { setSplitFor(null); say(m); load(); }} />}
       {isAdmin && syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} onDone={(m) => { say(m); load(); }} />}
       {isAdmin && <DeletedDialog open={deletedOpen} onClose={() => setDeletedOpen(false)} onRestored={(m) => { say(m); load(); }} say={say} />}
       {isAdmin && <ImportExcelDialog open={importing} onClose={() => setImporting(false)}
@@ -270,13 +272,95 @@ export default function Ledger({ me }) {
   );
 }
 
-function TaxSelect({ r, onEdit }) {
-  const v = r.fields.taxable || "";
+const taxText = (f) => f.taxable === "Partial" ? `Partial · ${money(f.taxable_amount)}` : (f.taxable || "Not set");
+
+function TaxSelect({ r, onEdit, onSplit }) {
+  const f = r.fields;
+  const v = f.taxable || "";
   return (
-    <Select size="small" value={v} displayEmpty onClick={(e) => e.stopPropagation()} onChange={(e) => onEdit(r, "taxable", e.target.value)}
+    <Select size="small" value={v} displayEmpty onClick={(e) => e.stopPropagation()}
+      onChange={(e) => { if (e.target.value === "__split") onSplit?.(r); else onEdit(r, "taxable", e.target.value); }}
+      renderValue={(x) => x === "Partial" ? `Partial · ${money(f.taxable_amount)}` : x || "Not set"}
       sx={{ minWidth: 92, bgcolor: v ? undefined : warnBg, "& .MuiSelect-select": { py: 0.5 } }} inputProps={{ "aria-label": "Taxable" }}>
       <MenuItem value="">Not set</MenuItem><MenuItem value="Yes">Yes</MenuItem><MenuItem value="No">No</MenuItem>
+      {v === "Partial" && <MenuItem value="Partial" sx={{ display: "none" }}>Partial</MenuItem>}
+      {onSplit && <Divider />}
+      {onSplit && <MenuItem value="__split">{f.invoices?.length ? "Edit invoice split…" : "Split by invoice…"}</MenuItem>}
     </Select>
+  );
+}
+
+function InvoiceTable({ f, onEditSplit }) {
+  const p = taxParts(f);
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Stack direction="row" alignItems="center" sx={{ mb: .5 }}>
+        <Typography variant="subtitle2" sx={{ flex: 1 }}>Invoices paid · taxable {money(p.tax)} · not taxable {money(p.non)}</Typography>
+        {onEditSplit && <Button size="small" onClick={onEditSplit}>Edit split</Button>}
+      </Stack>
+      <Table size="small"><TableBody>{f.invoices.map((l) => (
+        <TableRow key={l.invoice}><TableCell>{l.invoice}</TableCell><TableCell align="right">{money(l.amount)}</TableCell>
+          <TableCell>{l.taxable === "Yes" ? "Taxable" : "Not taxable"}</TableCell></TableRow>))}
+      </TableBody></Table>
+    </Box>
+  );
+}
+
+function InvoiceSplitDialog({ r, onClose, onSaved }) {
+  const f = r.fields;
+  const blankLine = (inv = "") => ({ invoice: inv, amount: "", taxable: "Yes" });
+  const [lines, setLines] = useState(() => f.invoices?.length ? f.invoices.map((l) => ({ ...l }))
+    : [blankLine((f.invoice || "").split(",")[0].trim()), blankLine()]);
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const pay = num(f.amount);
+  const total = lines.reduce((s, l) => s + num(l.amount), 0);
+  const left = Math.round((pay - total) * 100) / 100;
+  const tax = lines.reduce((s, l) => s + (l.taxable === "Yes" ? num(l.amount) : 0), 0);
+  const set = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const ok = lines.length >= 2 && lines.every((l) => l.invoice.trim() && num(l.amount) > 0) && Math.abs(left) < 0.005;
+  const save = async (ls) => {
+    setBusy(true); setErr("");
+    try {
+      const res = await api.post(`/api/ledger/${r.id}/invoices`, { lines: ls });
+      onSaved(ls.length ? `Split into ${ls.length} invoices: ${money(ls.reduce((s, l) => s + (l.taxable === "Yes" ? num(l.amount) : 0), 0))} taxable.${res.excel === "pending" ? " Excel updates once the workbook is closed." : ""}`
+        : "Invoice split removed. Set Taxable again.");
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth onClick={(e) => e.stopPropagation()}>
+      <DialogTitle>Split by invoice</DialogTitle>
+      <DialogContent>
+        <Typography color="text.secondary" sx={{ mb: 2 }}>
+          {f.customer} · {money(f.amount)}{f.payref ? ` · ref ${f.payref}` : ""}. When one payment pays several invoices, list each with its amount and
+          whether it's taxable. The invoices must add up to the payment.
+        </Typography>
+        {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+        <Stack spacing={1.25}>
+          {lines.map((l, i) => (
+            <Stack key={i} direction="row" spacing={1} alignItems="center">
+              <TextField size="small" label="Invoice #" value={l.invoice} onChange={(e) => set(i, "invoice", e.target.value)} sx={{ flex: 1.2 }} autoFocus={i === 0} />
+              <TextField size="small" label="Amount" value={l.amount} onChange={(e) => set(i, "amount", e.target.value)} sx={{ flex: 1 }}
+                InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
+              <ToggleButtonGroup size="small" exclusive value={l.taxable} onChange={(_, v) => v && set(i, "taxable", v)}>
+                <ToggleButton value="Yes">Taxable</ToggleButton><ToggleButton value="No">Not taxable</ToggleButton>
+              </ToggleButtonGroup>
+              <IconButton size="small" aria-label="Remove invoice" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}><CloseIcon fontSize="small" /></IconButton>
+            </Stack>))}
+          <Box><Button size="small" onClick={() => setLines((ls) => [...ls, { ...blankLine(), amount: left > 0 ? left.toFixed(2) : "" }])}>
+            Add invoice{left > 0 ? ` (${money(left)} left)` : ""}</Button></Box>
+        </Stack>
+        <Alert severity={Math.abs(left) < 0.005 ? "success" : "warning"} sx={{ mt: 2 }}>
+          {Math.abs(left) < 0.005 ? `Adds up to ${money(pay)}.` : left > 0 ? `${money(left)} of ${money(pay)} still to assign.` : `${money(-left)} more than the payment (${money(pay)}).`}
+          {" "}Taxable {money(tax)} · not taxable {money(total - tax)}.
+        </Alert>
+      </DialogContent>
+      <DialogActions>
+        {f.invoices?.length > 0 && <Button color="error" disabled={busy} onClick={() => save([])} sx={{ mr: "auto" }}>Remove split</Button>}
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="contained" disabled={!ok || busy} onClick={() => save(lines.map((l) => ({ invoice: l.invoice, amount: String(l.amount), taxable: l.taxable })))}>
+          {busy ? "Saving…" : "Save split"}</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -291,7 +375,7 @@ function BankSelect({ r, banks, onEdit }) {
   );
 }
 
-function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen }) {
+function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen, onSplit }) {
   const f = r.fields;
   return (
     <TableRow hover onClick={onOpen} sx={{ cursor: "pointer" }}>
@@ -312,7 +396,7 @@ function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen }) {
       <TableCell>{f.payref || (f.method === "wire" ? fdate(f.received, { month: "short", day: "numeric" }) : "")}</TableCell>
       <TableCell>{f.order}</TableCell>
       <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}</TableCell>
-      <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} /> : (f.taxable || "Not set")}</TableCell>
+      <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}</TableCell>
       <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
         {r.pending ? <Tooltip title={r.note || "Waiting for the workbook to be closed"}><Chip size="small" label="pending" sx={{ bgcolor: warnBg, color: "#8a5300" }} /></Tooltip> : r.row}
@@ -340,7 +424,7 @@ function EditField({ label, value, onSave, type = "text", options, help }) {
       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setV(value || ""); } }} />);
 }
 
-function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
+function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, onSplit, banks, sheets, onClose, onEdit, say, onChanged, onDeleted }) {
   const [lb, setLb] = useState(null);
   const [busy, setBusy] = useState(false);
   const [del, setDel] = useState(null);
@@ -385,9 +469,10 @@ function DetailDrawer({ r, isAdmin, canTax, canDownload, canAttach, banks, sheet
           <input hidden type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp" onChange={(e) => { attach(e.target.files); e.target.value = ""; }} /></Button>}
       </Stack>}
       <Stack direction="row" spacing={2} sx={{ my: 2 }}>
-        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} /> : <Typography>{f.taxable || "Not set"}</Typography>}</Box>
+        <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : <Typography>{taxText(f)}</Typography>}</Box>
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
       </Stack>
+      {f.invoices?.length > 0 && <InvoiceTable f={f} onEditSplit={canTax ? () => onSplit(r) : null} />}
       {r.pending && <Alert severity="warning" sx={{ mb: 2 }}>{r.note || "Waiting to be written to Excel."}</Alert>}
       {isAdmin && <>
         <Divider sx={{ mb: 2 }} />

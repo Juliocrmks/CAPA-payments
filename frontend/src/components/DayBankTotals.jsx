@@ -5,7 +5,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DownloadIcon from "@mui/icons-material/Download";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import { money, num, fdate } from "../api";
+import { money, num, fdate, taxParts } from "../api";
 import { SheetChip } from "./common";
 
 // The cashier's daily view: for one day received, what went into each deposit bank (cash / checks / card-ACH-wire)
@@ -29,7 +29,7 @@ export function dayTotals(rows, day, banks, byPayee) {
     for (const t of [groups.get(key), all]) {
       t.count += 1; t.total += a;
       t[f.method === "cash" ? "cash" : f.method === "check" ? "check" : "credit"] += a;
-      if (f.taxable === "Yes") t.taxable += a; else if (f.taxable === "No") t.notTaxable += a; else { t.unset += a; t.unsetCount += 1; }
+      const p = taxParts(f); t.taxable += p.tax; t.notTaxable += p.non; if (p.unset) { t.unset += p.unset; t.unsetCount += 1; }
     }
   }
   const order = (b) => (b === NONE ? 1e6 : banks.indexOf(b) >= 0 ? banks.indexOf(b) : 1000);

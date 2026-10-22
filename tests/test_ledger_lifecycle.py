@@ -105,3 +105,44 @@ def test_page_urls_are_versioned_and_thumbs_trim_the_page(admin):
     im = Image.open(io.BytesIO(t.content))
     assert im.width <= 480 and im.width / im.height > 2                                  # the check, not the whole page
     assert admin.get(p["image"] + "&download=1").headers["content-disposition"].startswith("attachment")
+
+def test_split_payment_by_invoice(admin, client):
+    """One 10,000 check paying three invoices, not all taxable: AR splits it; totals, workbook and exports follow."""
+    from fastapi.testclient import TestClient
+    admin.post("/api/settings/practice")
+    pid = sent(admin, customer="SPLIT CO", amount="10000.00", received="2026-11-13", deposit_bank="TNB")
+    email = f"ar.split.{pid}@example.com"
+    admin.post("/api/users", json={"email": email, "role": "ar", "password": "pw"})
+    ar = TestClient(client.app); ar.post("/api/login", json={"username": email, "password": "pw"})
+    url = f"/api/ledger/{pid}/invoices"
+    lines = [dict(invoice="inv-1", amount="2000", taxable="Yes"), dict(invoice="INV-2", amount="4,000.00", taxable="No"),
+             dict(invoice="INV-3", amount="4000", taxable="Yes")]
+    assert ar.post(url, json={"lines": lines[:2]}).status_code == 400                        # adds up to 6,000, not 10,000
+    assert "add up to $6,000.00" in ar.post(url, json={"lines": lines[:2]}).json()["detail"]
+    assert ar.post(url, json={"lines": lines[:1] + [dict(lines[0], amount="8000")]}).status_code == 400   # same invoice twice
+    r = ar.post(url, json={"lines": lines}).json()
+    assert r["excel"] == "synced"
+    f = row(admin, pid)["fields"]
+    assert f["taxable"] == "Partial" and f["taxable_amount"] == "6000.00" and f["invoice"] == "INV-1, INV-2, INV-3"
+    assert [l["invoice"] for l in f["invoices"]] == ["INV-1", "INV-2", "INV-3"]
+    ws, lay = mvc(admin)
+    assert ws.cell(row(admin, pid)["row"], lay.cols["taxable"]).value == "PARTIAL 6,000.00"
+    # the exports carry the taxable part
+    led = openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={"ids": [pid]}).content))
+    assert [led["Ledger"].cell(2, c).value for c in (8, 9, 10, 11)] == [10000, "Partial", 6000, 4000]
+    assert "INV-2 4,000.00 not taxable" in led["Ledger"]["P2"].value
+    day = [c.value for c in led["Daily bank totals"][2]]
+    assert day[7:10] == [6000, 4000, 0]
+    # read-only can't split; a plain Yes removes the split
+    ro_email = f"ro.split.{pid}@example.com"
+    admin.post("/api/users", json={"email": ro_email, "role": "readonly", "password": "pw"})
+    ro = TestClient(client.app); ro.post("/api/login", json={"username": ro_email, "password": "pw"})
+    assert ro.post(url, json={"lines": lines}).status_code == 403
+    assert ar.patch(f"/api/ledger/{pid}", json={"taxable": "Yes"}).status_code == 200
+    f = row(admin, pid)["fields"]
+    assert f["taxable"] == "Yes" and not f["invoices"] and not f["taxable_amount"]
+    ws, lay = mvc(admin)
+    assert ws.cell(row(admin, pid)["row"], lay.cols["taxable"]).value == "YES"
+    # split again, then remove it with an empty list
+    assert ar.post(url, json={"lines": lines}).status_code == 200
+    assert ar.post(url, json={"lines": []}).status_code == 200 and row(admin, pid)["fields"]["taxable"] == ""
