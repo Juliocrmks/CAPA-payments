@@ -296,8 +296,13 @@ function LedgerRow({ r, isAdmin, canTax, banks, onEdit, onOpen }) {
   return (
     <TableRow hover onClick={onOpen} sx={{ cursor: "pointer" }}>
       <TableCell sx={{ py: 0.5 }}>
-        {r.pages?.length ? <Box component="img" src={r.pages[0].image} alt="" loading="lazy" sx={{ width: 48, height: 34, objectFit: "cover", objectPosition: "top", borderRadius: .5, border: "1px solid #E3DFDB", display: "block" }} />
-          : <Box sx={{ width: 48, height: 34, borderRadius: .5, bgcolor: "#F1EEEB", fontSize: 10, color: "text.secondary", display: "grid", placeItems: "center" }}>{r.imported ? "import" : "—"}</Box>}
+        {r.pages?.length ? (
+          <Tooltip placement="right" enterDelay={250} slotProps={{ tooltip: { sx: { bgcolor: "#fff", p: .5, maxWidth: "none", boxShadow: 6, border: "1px solid #E3DFDB" } } }}
+            title={<Box component="img" src={r.pages[0].thumb || r.pages[0].image} alt="" sx={{ display: "block", width: 420, maxWidth: "70vw" }} />}>
+            <Box component="img" src={r.pages[0].thumb || r.pages[0].image} alt="Document" loading="lazy"
+              sx={{ width: 92, height: 44, objectFit: "cover", objectPosition: "top", bgcolor: "#fff", borderRadius: .5, border: "1px solid #D6D0CA", display: "block", cursor: "zoom-in" }} />
+          </Tooltip>)
+          : <Box sx={{ width: 92, height: 44, borderRadius: .5, bgcolor: "#F1EEEB", fontSize: 11, color: "text.secondary", display: "grid", placeItems: "center" }}>{r.imported ? "imported" : "—"}</Box>}
       </TableCell>
       <TableCell sx={{ whiteSpace: "nowrap" }}>{fdate(f.received)}</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>{f.customer}</TableCell>

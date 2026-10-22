@@ -29,6 +29,8 @@ export function Triangles({ size = 9 }) {
   return <Box component="span" sx={{ display: "inline-flex", alignItems: "flex-end" }}>{t("#E8961F")}{t("#C83028")}{t("#0068A0")}</Box>;
 }
 
+export const withParam = (url, q) => `${url}${url.includes("?") ? "&" : "?"}${q}`;
+
 export function Lightbox({ pages, index, onClose, canDownload }) {
   const [i, setI] = useState(index || 0);
   const [zoom, setZoom] = useState(1);
@@ -48,7 +50,7 @@ export function Lightbox({ pages, index, onClose, canDownload }) {
         <Typography sx={{ flex: 1 }}>Page {i + 1} of {pages.length} · {kindLabel(p.kind)}</Typography>
         <IconButton aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} sx={{ color: "#fff" }}><ZoomOutIcon /></IconButton>
         <IconButton aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(4, z + 0.25))} sx={{ color: "#fff" }}><ZoomInIcon /></IconButton>
-        {canDownload && !p.sensitive && <Tooltip title="Download this page"><IconButton aria-label="Download this page" component="a" href={`${p.image}?download=1`} sx={{ color: "#fff" }}><DownloadIcon /></IconButton></Tooltip>}
+        {canDownload && !p.sensitive && <Tooltip title="Download this page"><IconButton aria-label="Download this page" component="a" href={withParam(p.image, "download=1")} sx={{ color: "#fff" }}><DownloadIcon /></IconButton></Tooltip>}
         <IconButton aria-label="Close" onClick={onClose} sx={{ color: "#fff" }}><CloseIcon /></IconButton>
       </Stack>
       <Box sx={{ flex: 1, overflow: "auto", display: "flex", justifyContent: "center", alignItems: zoom > 1 ? "flex-start" : "center", p: 2, position: "relative" }}>
@@ -81,12 +83,12 @@ export function Thumbs({ pages, onOpen, height = 92, max = 6, canDownload = fals
               sx={{ p: 0, border: "1px solid", borderColor: p.kind === "attachment" ? "secondary.light" : "divider", borderRadius: 1, bgcolor: "#fff", cursor: "zoom-in", display: "block",
                 height, width: height * 0.78, overflow: "hidden", "&:focus-visible": { outline: "2px solid", outlineColor: "secondary.main" } }}>
               {p.sensitive ? <Box sx={{ height: "100%", display: "grid", placeItems: "center", color: "text.secondary" }}><LockIcon fontSize="small" /></Box>
-                : <img src={p.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />}
+                : <img src={p.thumb || p.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }} />}
             </Box>
           </Tooltip>
           {(canDownload && !p.sensitive) || (onRemove && p.kind === "attachment") ? (
             <Stack direction="row" spacing={.25} sx={{ position: "absolute", top: 2, right: 2 }}>
-              {canDownload && !p.sensitive && <Tooltip title="Download"><IconButton size="small" component="a" href={`${p.image}?download=1`} aria-label={`Download ${kindLabel(p.kind)} ${i + 1}`}
+              {canDownload && !p.sensitive && <Tooltip title="Download"><IconButton size="small" component="a" href={withParam(p.image, "download=1")} aria-label={`Download ${kindLabel(p.kind)} ${i + 1}`}
                 sx={{ bgcolor: "rgba(255,255,255,.92)", p: .25, "&:hover": { bgcolor: "#fff" } }}><DownloadIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>}
               {onRemove && p.kind === "attachment" && <Tooltip title="Remove attachment"><IconButton size="small" onClick={() => onRemove(p)} aria-label={`Remove attachment ${i + 1}`}
                 sx={{ bgcolor: "rgba(255,255,255,.92)", p: .25, "&:hover": { bgcolor: "#fff" } }}><CloseIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>}

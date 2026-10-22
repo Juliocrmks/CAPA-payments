@@ -139,7 +139,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (98 tests)
+tests/                     pytest suite (99 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

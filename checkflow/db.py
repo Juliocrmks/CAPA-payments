@@ -182,13 +182,19 @@ def dedupe_key(f):
     if not all(parts): return ""
     return hashlib.sha1(("|".join([m] + [str(p) for p in parts])).encode()).hexdigest()
 
+def page_urls(d, image):
+    """Image URLs carry the stored file's unique name, so a browser never shows an old cached picture under a reused
+    page number (e.g. after the database was started fresh)."""
+    v = (image or "")[:12]
+    return dict(d, image=f"/api/pages/{d['id']}?v={v}", thumb=f"/api/pages/{d['id']}/thumb?v={v}")
+
 def _row(r, c=None):
     f = blank_fields() | json.loads(r["fields"] or "{}")
     out = dict(id=r["id"], document_id=r["document_id"], status=r["status"], fields=f, warns=json.loads(r["warns"] or "{}"),
                sources=json.loads(r["sources"] or "[]"), imported=bool(r["imported"]), created_at=r["created_at"],
                submitted_at=r["submitted_at"], submitted_by=r["submitted_by"])
     c = c or conn()
-    out["pages"] = [dict(id=p["id"], kind=p["kind"], sensitive=bool(p["sensitive"]), image=f"/api/pages/{p['id']}")
+    out["pages"] = [page_urls(dict(id=p["id"], kind=p["kind"], sensitive=bool(p["sensitive"])), p["image"])
                     for p in c.execute("""SELECT p.* FROM payment_pages pp JOIN pages p ON p.id=pp.page_id
                                           WHERE pp.payment_id=? ORDER BY pp.ord, p.idx""", (r["id"],))]
     s = c.execute("SELECT * FROM submissions WHERE payment_id=?", (r["id"],)).fetchone()
@@ -326,10 +332,10 @@ def ledger_rows():
                             FROM payments p LEFT JOIN submissions s ON s.payment_id=p.id
                             WHERE p.status='submitted' ORDER BY p.id""").fetchall()
         pages = {}
-        for pp in c.execute("""SELECT pp.payment_id, p.id, p.kind, p.sensitive FROM payment_pages pp JOIN pages p ON p.id=pp.page_id
+        for pp in c.execute("""SELECT pp.payment_id, p.id, p.kind, p.sensitive, p.image FROM payment_pages pp JOIN pages p ON p.id=pp.page_id
                                ORDER BY pp.ord, p.idx"""):
-            pages.setdefault(pp["payment_id"], []).append(dict(id=pp["id"], kind=pp["kind"], sensitive=bool(pp["sensitive"]),
-                                                                image=f"/api/pages/{pp['id']}"))
+            pages.setdefault(pp["payment_id"], []).append(page_urls(dict(id=pp["id"], kind=pp["kind"], sensitive=bool(pp["sensitive"])),
+                                                                          pp["image"]))
     out = []
     for r in rows:
         f = blank_fields() | json.loads(r["fields"])

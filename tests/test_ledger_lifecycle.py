@@ -86,3 +86,22 @@ def test_excel_export(admin):
     assert led["B2"].value == "EXPORT CO" and led["H2"].value == 1000.5 and led["A3"].value == "Total"
     t = wb["Daily bank totals"]
     assert [c.value for c in t[2]][:3] == ["2026-11-12", "TNB", 1] and t["H2"].value == 1000.5
+
+def test_page_urls_are_versioned_and_thumbs_trim_the_page(admin):
+    """Image URLs carry the stored file's name (a reused page number never shows an old cached picture); the list
+    thumbnail trims a check printed on the top of a letter page down to the check."""
+    admin.post("/api/settings/practice")
+    pid = sent(admin, customer="THUMB CO")
+    page = Image.new("RGB", (850, 1100), "white")
+    from PIL import ImageDraw
+    ImageDraw.Draw(page).rectangle((40, 40, 810, 360), outline="black", width=6)          # a check on the top third
+    b = io.BytesIO(); page.save(b, "JPEG")
+    p = admin.post(f"/api/payments/{pid}/attachments", files={"files": ("check.jpg", b.getvalue(), "image/jpeg")}).json()["pages"][0]
+    assert "?v=" in p["image"] and p["thumb"].startswith(f"/api/pages/{p['id']}/thumb?v=")
+    led = row(admin, pid)["pages"][0]
+    assert led["image"] == p["image"] and led["thumb"] == p["thumb"]
+    t = admin.get(p["thumb"])
+    assert t.status_code == 200
+    im = Image.open(io.BytesIO(t.content))
+    assert im.width <= 480 and im.width / im.height > 2                                  # the check, not the whole page
+    assert admin.get(p["image"] + "&download=1").headers["content-disposition"].startswith("attachment")
