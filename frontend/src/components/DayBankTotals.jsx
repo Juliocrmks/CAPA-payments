@@ -5,7 +5,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DownloadIcon from "@mui/icons-material/Download";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import { money, num, fdate, taxParts } from "../api";
+import { money, num, fdate, taxParts, inDaily } from "../api";
 import { SheetChip } from "./common";
 
 // The cashier's daily view: for one day received, what went into each deposit bank (cash / checks / card-ACH-wire)
@@ -19,9 +19,11 @@ const blank = () => ({ count: 0, cash: 0, check: 0, credit: 0, total: 0, taxable
 export function dayTotals(rows, day, banks, byPayee) {
   const groups = new Map();
   const all = blank();
+  const left = { count: 0, total: 0 };          // 'Affects daily total' off (e.g. a BPS withdrawal)
   for (const r of rows) {
     const f = r.fields;
     if (f.received !== day) continue;
+    if (!inDaily(f)) { left.count += 1; left.total += num(f.amount); continue; }
     const bank = f.deposit_bank || NONE;
     const key = byPayee ? `${bank}|${r.sheet || ""}` : bank;
     if (!groups.has(key)) groups.set(key, { bank, sheet: byPayee ? r.sheet || "" : null, ...blank() });
@@ -34,7 +36,7 @@ export function dayTotals(rows, day, banks, byPayee) {
   }
   const order = (b) => (b === NONE ? 1e6 : banks.indexOf(b) >= 0 ? banks.indexOf(b) : 1000);
   const list = [...groups.values()].sort((x, y) => order(x.bank) - order(y.bank) || x.bank.localeCompare(y.bank) || (x.sheet || "").localeCompare(y.sheet || ""));
-  return { list, all };
+  return { list, all, left };
 }
 
 export default function DayBankTotals({ rows, banks }) {
@@ -43,7 +45,7 @@ export default function DayBankTotals({ rows, banks }) {
   const [byPayee, setByPayee] = useState(false);
   const [open, setOpen] = useState(true);
   useEffect(() => { if (!day && days.length) setDay(days[0]); }, [days, day]);
-  const { list, all } = useMemo(() => dayTotals(rows, day, banks, byPayee), [rows, day, banks, byPayee]);
+  const { list, all, left } = useMemo(() => dayTotals(rows, day, banks, byPayee), [rows, day, banks, byPayee]);
   const i = days.indexOf(day);
   const older = i >= 0 ? days[i + 1] : days.find((d) => d < day);
   const newer = i > 0 ? days[i - 1] : i < 0 ? [...days].reverse().find((d) => d > day) : undefined;
@@ -103,6 +105,8 @@ export default function DayBankTotals({ rows, banks }) {
               </TableRow>
             </TableBody>
           </Table>}
+          {left.count > 0 && <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+            {left.count} payment{left.count !== 1 ? "s" : ""} ({money(left.total)}) {left.count !== 1 ? "are" : "is"} left out of these totals: "Affects daily total" is off.</Typography>}
           {all.unsetCount > 0 && <Typography variant="caption" color="warning.dark" sx={{ display: "block", mt: 1 }}>
             {all.unsetCount} payment{all.unsetCount !== 1 ? "s on this day still need" : " on this day still needs"} Taxable set. The taxable total will change once they are.</Typography>}
         </Box>

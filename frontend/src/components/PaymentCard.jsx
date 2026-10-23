@@ -1,12 +1,13 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Paper, Box, Stack, TextField, MenuItem, Button, Chip, Alert, Autocomplete, IconButton, Menu, Typography, Tooltip, InputAdornment, useMediaQuery } from "@mui/material";
+import { Paper, Box, Stack, TextField, MenuItem, Button, Chip, Alert, Autocomplete, IconButton, Menu, Typography, Tooltip, InputAdornment, useMediaQuery,
+  FormControlLabel, Checkbox } from "@mui/material";
 import DocViewer from "./DocViewer";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
-import { api, METHODS } from "../api";
+import { api, METHODS, inDaily } from "../api";
 import { brand, warnBg } from "../theme";
 import { Thumbs, Lightbox, SheetChip, kindLabel } from "./common";
 
@@ -109,6 +110,11 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
             <Autocomplete freeSolo options={meta.deposit_banks || []} value={f.deposit_bank || ""}
               onInputChange={(_, v, reason) => reason !== "reset" && set("deposit_bank", (v || "").toUpperCase())}
               renderInput={(params) => <TextField {...params} label="Deposit bank (optional)" helperText=" " />} />
+            <Box>
+              <FormControlLabel sx={{ m: 0 }} label="Affects daily total"
+                control={<Checkbox size="small" checked={inDaily(f)} onChange={(e) => set("daily_total", e.target.checked ? "Yes" : "No", true)} />} />
+              {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal deposited to BPS</Typography>}
+            </Box>
             {(EXTRA[f.method] || []).map(([k, l, t]) => tf(k, l, t))}
           </Box>
           {other.length > 0 && (

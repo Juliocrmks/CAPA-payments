@@ -82,6 +82,11 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    card/ACH/wire, how much is taxable, not taxable and not set yet, by bank or by bank and payee, with CSV. It is
    computed from the ledger on screen, so it changes the moment a Taxable, bank or amount is edited.
 
+   **Affects daily total**: a checkbox on every payment (review card and side panel; admins change it), on by default.
+   A negative amount deposited to **BPS** (a withdrawal there) starts off. Payments with it off are left out of the
+   daily bank totals (on screen, with a note, and in the export's daily sheet) and marked "not in daily total" in the
+   ledger; the ledger itself still lists and totals them.
+
    **Import Excel** (admin): add past payments from any spreadsheet. The payee workbook itself (day blocks, any
    year) or a plain table with Date, Customer and Amount columns (Method, Check #, Ticket, Payee, Deposit bank and
    Taxable are used when present; .csv works too). A preview shows rows per payee, what's already in the ledger
@@ -156,7 +161,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (102 tests)
+tests/                     pytest suite (103 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 

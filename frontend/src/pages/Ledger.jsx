@@ -17,7 +17,7 @@ import AttachFileIcon from "@mui/icons-material/AttachFile";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ImportExcelDialog from "../components/ImportExcelDialog";
 import DayBankTotals from "../components/DayBankTotals";
-import { api, money, num, fdate, METHODS, todayIso, downloadPost, taxParts } from "../api";
+import { api, money, num, fdate, METHODS, todayIso, downloadPost, taxParts, inDaily } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
 
@@ -144,6 +144,7 @@ export default function Ledger({ me }) {
     try {
       const res = await api.patch(`/api/ledger/${r.id}`, { [k]: v });
       if (k === "posted") say(v ? `NetSuite # ${v} saved: posted.` : "NetSuite # removed: not posted.");
+      else if (k === "daily_total") say(v === "Yes" ? "Counted in the daily total." : "Left out of the daily total.");
       else if (res.excel !== "unchanged") say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved in CheckFlow (this row isn't in the workbook)." : "Saved and updated in Excel.",
         res.excel === "pending" ? "warning" : "success");
       load();
@@ -309,10 +310,10 @@ function PostedBox({ r, canPost, onEdit, wide }) {
         "& .MuiOutlinedInput-root": v ? { bgcolor: "#EEF6EF", "& fieldset": { borderColor: "success.light" } } : {} }} />);
 }
 
-const FIELD_NAMES = { taxable: "Taxable", posted: "Posted", amount: "Amount", customer: "Customer", received: "Date received", sheet: "Payee sheet",
+const FIELD_NAMES = { daily_total: "Affects daily total", taxable: "Taxable", posted: "Posted", amount: "Amount", customer: "Customer", received: "Date received", sheet: "Payee sheet",
   method: "Method", ticket: "Ticket ref", payref: "Payment ref", order: "Order #", deposit_bank: "Deposit bank", invoice: "Invoice", taxable_amount: "Taxable amount",
   check_no: "Check #", bank: "Bank", memo: "Memo", confirmation: "Confirmation" };
-const show = (k, v) => k === "posted" ? (v === "Yes" ? "posted" : v || "not posted") : k === "amount" || k === "taxable_amount" ? (v ? money(v) : "—") : (v || "not set");
+const show = (k, v) => k === "daily_total" ? (v === "No" ? "off" : v === "Yes" ? "on" : "automatic") : k === "posted" ? (v === "Yes" ? "posted" : v || "not posted") : k === "amount" || k === "taxable_amount" ? (v ? money(v) : "—") : (v || "not set");
 function historyText(h) {
   const d = h.detail || {};
   switch (h.action) {
@@ -475,7 +476,8 @@ function LedgerRow({ r, isAdmin, canTax, canPost, banks, onEdit, onOpen, onSplit
       <TableCell>{f.ticket}</TableCell>
       <TableCell>{f.payref || (f.method === "wire" ? fdate(f.received, { month: "short", day: "numeric" }) : "")}</TableCell>
       <TableCell>{f.order}</TableCell>
-      <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}</TableCell>
+      <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}
+        {!inDaily(f) && <Typography variant="caption" color="text.secondary" display="block" sx={{ fontWeight: 400, whiteSpace: "nowrap" }}>not in daily total</Typography>}</TableCell>
       <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}<ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></TableCell>
       <TableCell onClick={(e) => e.stopPropagation()} sx={{ whiteSpace: "nowrap" }}>
         <PostedBox r={r} canPost={canPost} onEdit={onEdit} />
@@ -552,12 +554,17 @@ function DetailDrawer({ r, isAdmin, canTax, canPost, canDownload, canAttach, onS
         {canAttach && <Button size="small" startIcon={<AttachFileIcon />} component="label" disabled={busy}>{busy ? "Attaching…" : "Add attachment"}
           <input hidden type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp" onChange={(e) => { attach(e.target.files); e.target.value = ""; }} /></Button>}
       </Stack>}
-      <Stack direction="row" spacing={2} sx={{ my: 2 }}>
+      <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap" sx={{ my: 2 }}>
         <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : <Typography>{taxText(f)}</Typography>}
           <ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></Box>
         <Box><Typography variant="caption" color="text.secondary" display="block">Posted to NetSuite (verification #)</Typography><PostedBox r={r} canPost={canPost} onEdit={onEdit} wide />
           <ByLine name={f.posted && f.posted_by} at={f.posted_at} /></Box>
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
+        <Box><Typography variant="caption" color="text.secondary" display="block">Daily total</Typography>
+          {isAdmin ? <FormControlLabel sx={{ m: 0 }} label="Affects daily total"
+            control={<Checkbox size="small" checked={inDaily(f)} onChange={(e) => onEdit(r, "daily_total", e.target.checked ? "Yes" : "No")} />} />
+            : <Typography variant="body2">{inDaily(f) ? "Counted" : "Left out"}</Typography>}
+          {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal to BPS</Typography>}</Box>
       </Stack>
       {f.invoices?.length > 0 && <InvoiceTable f={f} onEditSplit={canTax ? () => onSplit(r) : null} />}
       {r.pending && <Alert severity="warning" sx={{ mb: 2 }}>{r.note || "Waiting to be written to Excel."}</Alert>}

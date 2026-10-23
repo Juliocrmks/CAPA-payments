@@ -787,7 +787,16 @@ def ledger(user=Depends(require_perm("ledger.view"))):
 # Ledger edits: AR may set Taxable; admins may correct any field of a payment already sent to Excel.
 # Every edit takes the same road: saved at once, row queued, written to the workbook now or by the 30 s retry loop.
 EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "method", "amount", "taxable", "taxable_amount", "deposit_bank"]
-EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo", "posted"]
+EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo", "posted", "daily_total"]
+
+def in_daily_total(f):
+    """'Affects daily total': on for every payment unless someone turned it off, except a negative amount deposited to
+    BPS (a withdrawal there), which is off unless someone turned it on. daily_total: '' = automatic, 'Yes' / 'No' = chosen."""
+    v = f.get("daily_total") or ""
+    if v in ("Yes", "No"): return v == "Yes"
+    try: neg = float(str(f.get("amount") or 0).replace(",", "")) < 0
+    except ValueError: neg = False
+    return not (neg and (f.get("deposit_bank") or "").strip().upper().startswith("BPS"))
 
 def _who(user): return user.get("display_name") or user.get("email") or user["username"]
 def _now(): return datetime.datetime.now().isoformat(timespec="seconds")
@@ -852,6 +861,7 @@ def _clean_edit(before, body, user):
         except ValueError: raise HTTPException(400, "Date received must be a valid date.")
     if "method" in new and new["method"] not in config.METHODS: raise HTTPException(400, "Unknown payment method.")
     if "taxable" in new and new["taxable"] not in ("Yes", "No", ""): raise HTTPException(400, "Taxable must be Yes, No or blank.")
+    if "daily_total" in new and new["daily_total"] not in ("Yes", "No", ""): raise HTTPException(400, "Affects daily total must be Yes, No or blank.")
     if "posted" in new:          # the NetSuite verification number; blank = not posted
         new["posted"] = " ".join(new["posted"].split())
         if len(new["posted"]) > 40: raise HTTPException(400, "The NetSuite number is too long (40 characters at most).")
@@ -994,7 +1004,7 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     wb = Workbook(); ws = wb.active; ws.title = "Ledger"
     head = ["Received", "Customer", "Payee", "Method", "Ticket ref", "Payment ref", "Order #", "Amount", "Taxable", "Taxable amount",
             "Not taxable amount", "Deposit bank", "Check #", "Bank (drawn on)", "Invoice", "Invoice split", "Pages", "Excel row",
-            "Taxable set by", "Taxable set at", "NetSuite #", "Posted by", "Posted at"]
+            "Taxable set by", "Taxable set at", "NetSuite #", "Posted by", "Posted at", "In daily total"]
     ws.append(head)
     for x in rows:
         f = x["fields"]
@@ -1005,7 +1015,8 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
                    f.get("order"), num(f.get("amount")), f.get("taxable"), round(tx, 2) if f.get("taxable") else None,
                    round(ntx, 2) if f.get("taxable") else None, f.get("deposit_bank"), f.get("check_no"), f.get("bank"), f.get("invoice"), split,
                    len(x.get("pages") or []), x.get("row"), f.get("taxable_by"), f.get("taxable_at"),
-                   f.get("posted") or "", f.get("posted_by") if f.get("posted") else "", f.get("posted_at") if f.get("posted") else ""])
+                   f.get("posted") or "", f.get("posted_by") if f.get("posted") else "", f.get("posted_at") if f.get("posted") else "",
+                   "Yes" if in_daily_total(f) else "No"])
     n = len(rows) + 1
     ws.append(["Total", "", "", "", "", "", "", f"=SUBTOTAL(9,H2:H{n})", "", f"=SUBTOTAL(9,J2:J{n})", f"=SUBTOTAL(9,K2:K{n})"])
     bold, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="381F12")
@@ -1014,15 +1025,17 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     for row in ws.iter_rows(min_row=2, min_col=8, max_col=11):
         for c in row:
             if c.column != 9: c.number_format = "#,##0.00"
-    for col, w in zip("ABCDEFGHIJKLMNOPQRSTUVW", (12, 34, 9, 12, 11, 14, 11, 14, 9, 14, 16, 13, 11, 22, 16, 40, 7, 9, 22, 19, 10, 22, 19)):
+    for col, w in zip("ABCDEFGHIJKLMNOPQRSTUVWX", (12, 34, 9, 12, 11, 14, 11, 14, 9, 14, 16, 13, 11, 22, 16, 40, 7, 9, 22, 19, 12, 22, 19, 12)):
         ws.column_dimensions[col].width = w
-    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:W{n}"
+    ws.freeze_panes = "A2"; ws.auto_filter.ref = f"A1:X{n}"
     # daily totals per deposit bank (the cashier's view)
     t = wb.create_sheet("Daily bank totals")
     t.append(["Day", "Deposit bank", "Payments", "Cash", "Checks", "Card / ACH / wire", "Total", "Taxable", "Not taxable", "Taxable not set"])
     agg = {}
     for x in rows:
-        f = x["fields"]; k = (f.get("received") or "", f.get("deposit_bank") or "No deposit bank")
+        f = x["fields"]
+        if not in_daily_total(f): continue                       # 'Affects daily total' off (e.g. a BPS withdrawal)
+        k = (f.get("received") or "", f.get("deposit_bank") or "No deposit bank")
         a = agg.setdefault(k, [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]); v = num(f.get("amount"))
         a[0] += 1; a[1 if f.get("method") == "cash" else 2 if f.get("method") == "check" else 3] += v; a[4] += v
         tx, ntx, unset = tax_parts(f); a[5] += tx; a[6] += ntx; a[7] += unset

@@ -36,6 +36,11 @@ export const taxParts = (f) => {
   if (f.taxable === "Partial") { const t = num(f.taxable_amount); return { tax: t, non: a - t, unset: 0 }; }
   return f.taxable === "Yes" ? { tax: a, non: 0, unset: 0 } : f.taxable === "No" ? { tax: 0, non: a, unset: 0 } : { tax: 0, non: 0, unset: a };
 };
+// 'Affects daily total': on unless turned off; a negative amount deposited to BPS is off unless turned on.
+export const inDaily = (f) => {
+  if (f.daily_total === "Yes" || f.daily_total === "No") return f.daily_total === "Yes";
+  return !(num(f.amount) < 0 && String(f.deposit_bank || "").trim().toUpperCase().startsWith("BPS"));
+};
 export const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : 0; };
 export const fdate = (iso, opts) => {
   if (!iso) return "";
