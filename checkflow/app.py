@@ -852,7 +852,9 @@ def _clean_edit(before, body, user):
         except ValueError: raise HTTPException(400, "Date received must be a valid date.")
     if "method" in new and new["method"] not in config.METHODS: raise HTTPException(400, "Unknown payment method.")
     if "taxable" in new and new["taxable"] not in ("Yes", "No", ""): raise HTTPException(400, "Taxable must be Yes, No or blank.")
-    if "posted" in new and new["posted"] not in ("Yes", ""): raise HTTPException(400, "Posted must be Yes or blank.")
+    if "posted" in new:          # the NetSuite verification number; blank = not posted
+        new["posted"] = " ".join(new["posted"].split())
+        if len(new["posted"]) > 40: raise HTTPException(400, "The NetSuite number is too long (40 characters at most).")
     if "customer" in new:
         new["customer"] = " ".join(new["customer"].upper().split())
         if not new["customer"]: raise HTTPException(400, "Customer can't be empty.")
@@ -992,7 +994,7 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     wb = Workbook(); ws = wb.active; ws.title = "Ledger"
     head = ["Received", "Customer", "Payee", "Method", "Ticket ref", "Payment ref", "Order #", "Amount", "Taxable", "Taxable amount",
             "Not taxable amount", "Deposit bank", "Check #", "Bank (drawn on)", "Invoice", "Invoice split", "Pages", "Excel row",
-            "Taxable set by", "Taxable set at", "Posted to NetSuite", "Posted by", "Posted at"]
+            "Taxable set by", "Taxable set at", "NetSuite #", "Posted by", "Posted at"]
     ws.append(head)
     for x in rows:
         f = x["fields"]
@@ -1003,8 +1005,7 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
                    f.get("order"), num(f.get("amount")), f.get("taxable"), round(tx, 2) if f.get("taxable") else None,
                    round(ntx, 2) if f.get("taxable") else None, f.get("deposit_bank"), f.get("check_no"), f.get("bank"), f.get("invoice"), split,
                    len(x.get("pages") or []), x.get("row"), f.get("taxable_by"), f.get("taxable_at"),
-                   "Yes" if f.get("posted") == "Yes" else "", f.get("posted_by") if f.get("posted") == "Yes" else "",
-                   f.get("posted_at") if f.get("posted") == "Yes" else ""])
+                   f.get("posted") or "", f.get("posted_by") if f.get("posted") else "", f.get("posted_at") if f.get("posted") else ""])
     n = len(rows) + 1
     ws.append(["Total", "", "", "", "", "", "", f"=SUBTOTAL(9,H2:H{n})", "", f"=SUBTOTAL(9,J2:J{n})", f"=SUBTOTAL(9,K2:K{n})"])
     bold, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="381F12")

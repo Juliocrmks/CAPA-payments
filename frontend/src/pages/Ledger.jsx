@@ -25,7 +25,7 @@ const PERIODS = [["today", "Today"], ["week", "This week"], ["month", "This mont
 const GROUPS = [["day", "Day received"], ["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["customer", "Company"], ["sheet", "Payee sheet"],
   ["method", "Payment method"], ["deposit_bank", "Deposit bank"], ["taxable", "Taxable"], ["posted", "Posted to NetSuite"], ["none", "No grouping"]];
 const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["ticket", "Ticket ref"],
-  ["payref", "Payment ref"], ["order", "Order #"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
+  ["payref", "Payment ref"], ["order", "Order #"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted (NetSuite #)"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
 
 const iso = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
 const parse = (s) => { const [y, m, d] = (s || "").split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
@@ -51,7 +51,7 @@ function groupKey(r, g) {
     case "method": return [f.method, METHODS[f.method] || f.method];
     case "deposit_bank": return [f.deposit_bank || "", f.deposit_bank || "No deposit bank"];
     case "taxable": return [f.taxable || "~", f.taxable === "Yes" ? "Taxable" : f.taxable === "No" ? "Not taxable" : f.taxable === "Partial" ? "Partly taxable (split by invoice)" : "Taxable not set"];
-    case "posted": return [f.posted === "Yes" ? "1" : "0", f.posted === "Yes" ? "Posted to NetSuite" : "Not posted yet"];
+    case "posted": return [f.posted ? "1" : "0", f.posted ? "Posted to NetSuite" : "Not posted yet"];
     default: return ["all", "All payments"];
   }
 }
@@ -106,12 +106,12 @@ export default function Ledger({ me }) {
       if (tax === "yes" && f.taxable !== "Yes" && f.taxable !== "Partial") return false;
       if (tax === "no" && f.taxable !== "No" && f.taxable !== "Partial") return false;
       if (tax === "unset" && f.taxable) return false;
-      if (posted === "yes" && f.posted !== "Yes") return false;
-      if (posted === "no" && f.posted === "Yes") return false;
+      if (posted === "yes" && !f.posted) return false;
+      if (posted === "no" && f.posted) return false;
       if (onlyPending && !r.pending) return false;
       if (!needle) return true;
       return [f.customer, r.sheet, f.ticket, f.payref, f.check_no, f.order, f.amount, money(f.amount), f.deposit_bank, f.bank, f.confirmation,
-        f.invoice, f.last4, METHODS[f.method], fdate(d), f.memo].join(" ").toLowerCase().includes(needle);
+        f.invoice, f.last4, METHODS[f.method], fdate(d), f.memo, f.posted !== "Yes" ? f.posted : ""].join(" ").toLowerCase().includes(needle);
     });
   }, [data, q, from, to, sheets, methods, tax, posted, onlyPending]);
 
@@ -143,7 +143,7 @@ export default function Ledger({ me }) {
     setData((d) => ({ ...d, rows: d.rows.map(patch(v)) }));
     try {
       const res = await api.patch(`/api/ledger/${r.id}`, { [k]: v });
-      if (k === "posted") say(v ? "Marked as posted in NetSuite." : "Marked as not posted.");
+      if (k === "posted") say(v ? `NetSuite # ${v} saved: posted.` : "NetSuite # removed: not posted.");
       else if (res.excel !== "unchanged") say(res.excel === "pending" ? "Saved. Excel updates by itself once the workbook is closed." : res.excel === "skipped" ? "Saved in CheckFlow (this row isn't in the workbook)." : "Saved and updated in Excel.",
         res.excel === "pending" ? "warning" : "success");
       load();
@@ -156,9 +156,9 @@ export default function Ledger({ me }) {
   };
 
   const exportCsv = () => {
-    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Taxable amount", "Deposit bank", "Check date", "Bank", "Invoice", "Excel row", "Taxable set by", "Posted", "Posted by"];
+    const head = ["Received", "Customer", "Sheet", "Method", "Ticket ref", "Payment ref", "Order", "Amount", "Taxable", "Taxable amount", "Deposit bank", "Check date", "Bank", "Invoice", "Excel row", "Taxable set by", "NetSuite #", "Posted by"];
     const lines = [head].concat(groups.flatMap((g) => g.rows).map((r) => { const f = r.fields;
-      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.taxable ? taxParts(f).tax.toFixed(2) : "", f.deposit_bank, f.doc_date, f.bank, f.invoice, r.row, f.taxable_by, f.posted === "Yes" ? "Yes" : "", f.posted === "Yes" ? f.posted_by : ""]; }));
+      return [f.received, f.customer, r.sheet, METHODS[f.method], f.ticket, f.payref, f.order, f.amount, f.taxable, f.taxable ? taxParts(f).tax.toFixed(2) : "", f.deposit_bank, f.doc_date, f.bank, f.invoice, r.row, f.taxable_by, f.posted || "", f.posted ? f.posted_by : ""]; }));
     const csv = lines.map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `checkflow-ledger-${todayIso()}.csv`; a.click();
@@ -292,22 +292,31 @@ function ByLine({ name, at }) {      // who set it, and when, under the control
     </Box>);
 }
 
-function PostedBox({ r, canPost, onEdit, label }) {
-  const on = r.fields.posted === "Yes";
-  if (!canPost) return <Typography variant="body2" color={on ? "success.main" : "text.secondary"}>{on ? "Posted" : "Not posted"}</Typography>;
-  return <FormControlLabel sx={{ m: 0 }} label={label ? (on ? "Posted" : "Not posted") : ""}
-    control={<Checkbox size="small" checked={on} onChange={(e) => onEdit(r, "posted", e.target.checked ? "Yes" : "")}
-      inputProps={{ "aria-label": "Posted to NetSuite" }} sx={{ p: .5 }} color="success" />} />;
+// Posted = the NetSuite verification number typed in (blank = not posted). Saved on Enter or when leaving the box.
+function PostedBox({ r, canPost, onEdit, wide }) {
+  const v = r.fields.posted || "";
+  const shown = v === "Yes" ? "" : v;                       // 'Yes' = marked posted before numbers were asked for
+  const [t, setT] = useState(shown);
+  useEffect(() => { setT(shown); }, [shown]);
+  if (!canPost) return <Typography variant="body2" color={v ? "success.main" : "text.secondary"} sx={{ fontVariantNumeric: "tabular-nums" }}>
+    {v ? (v === "Yes" ? "Posted" : v) : "Not posted"}</Typography>;
+  const commit = () => { const n = t.trim(); if (n !== shown) onEdit(r, "posted", n); };
+  return (
+    <TextField size="small" value={t} onChange={(e) => setT(e.target.value)} onBlur={commit} onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setT(shown); e.target.blur(); } }}
+      placeholder={v === "Yes" ? "Add #" : "NetSuite #"} inputProps={{ "aria-label": "NetSuite verification number", maxLength: 40 }}
+      sx={{ width: wide ? 220 : 132, "& .MuiInputBase-input": { py: .6, fontVariantNumeric: "tabular-nums" },
+        "& .MuiOutlinedInput-root": v ? { bgcolor: "#EEF6EF", "& fieldset": { borderColor: "success.light" } } : {} }} />);
 }
 
 const FIELD_NAMES = { taxable: "Taxable", posted: "Posted", amount: "Amount", customer: "Customer", received: "Date received", sheet: "Payee sheet",
   method: "Method", ticket: "Ticket ref", payref: "Payment ref", order: "Order #", deposit_bank: "Deposit bank", invoice: "Invoice", taxable_amount: "Taxable amount",
   check_no: "Check #", bank: "Bank", memo: "Memo", confirmation: "Confirmation" };
-const show = (k, v) => k === "posted" ? (v === "Yes" ? "posted" : "not posted") : k === "amount" || k === "taxable_amount" ? (v ? money(v) : "—") : (v || "not set");
+const show = (k, v) => k === "posted" ? (v === "Yes" ? "posted" : v || "not posted") : k === "amount" || k === "taxable_amount" ? (v ? money(v) : "—") : (v || "not set");
 function historyText(h) {
   const d = h.detail || {};
   switch (h.action) {
-    case "ledger_edit": return Object.entries(d).map(([k, [a, b]]) => k === "posted" ? (b === "Yes" ? "Marked posted in NetSuite" : "Marked not posted")
+    case "ledger_edit": return Object.entries(d).map(([k, [a, b]]) => k === "posted" ? (b ? `Posted in NetSuite: # ${b === "Yes" ? "(none)" : b}${a && a !== "Yes" ? ` (was ${a})` : ""}` : `NetSuite # removed${a && a !== "Yes" ? ` (was ${a})` : ""}: not posted`)
       : `${FIELD_NAMES[k] || k}: ${show(k, a)} → ${show(k, b)}`).join(" · ");
     case "invoice_split": return d.invoices ? `Split by invoice (${d.invoices} invoices, ${d.taxable === "Partial" ? `${money(d.taxable_amount)} taxable` : `taxable ${d.taxable || "not set"}`})` : "Removed the invoice split";
     case "attachment_added": return `Added ${d.pages || ""} attachment page${d.pages === 1 ? "" : "s"}`;
@@ -470,7 +479,7 @@ function LedgerRow({ r, isAdmin, canTax, canPost, banks, onEdit, onOpen, onSplit
       <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}<ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></TableCell>
       <TableCell onClick={(e) => e.stopPropagation()} sx={{ whiteSpace: "nowrap" }}>
         <PostedBox r={r} canPost={canPost} onEdit={onEdit} />
-        <ByLine name={f.posted === "Yes" && f.posted_by} at={f.posted_at} />
+        <ByLine name={f.posted && f.posted_by} at={f.posted_at} />
       </TableCell>
       <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
@@ -546,8 +555,8 @@ function DetailDrawer({ r, isAdmin, canTax, canPost, canDownload, canAttach, onS
       <Stack direction="row" spacing={2} sx={{ my: 2 }}>
         <Box><Typography variant="caption" color="text.secondary" display="block">Taxable</Typography>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : <Typography>{taxText(f)}</Typography>}
           <ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></Box>
-        <Box><Typography variant="caption" color="text.secondary" display="block">Posted to NetSuite</Typography><PostedBox r={r} canPost={canPost} onEdit={onEdit} label />
-          <ByLine name={f.posted === "Yes" && f.posted_by} at={f.posted_at} /></Box>
+        <Box><Typography variant="caption" color="text.secondary" display="block">Posted to NetSuite (verification #)</Typography><PostedBox r={r} canPost={canPost} onEdit={onEdit} wide />
+          <ByLine name={f.posted && f.posted_by} at={f.posted_at} /></Box>
         {isAdmin && <Box><Typography variant="caption" color="text.secondary" display="block">Deposit bank</Typography><BankSelect r={r} banks={banks} onEdit={onEdit} /></Box>}
       </Stack>
       {f.invoices?.length > 0 && <InvoiceTable f={f} onEditSplit={canTax ? () => onSplit(r) : null} />}

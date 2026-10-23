@@ -53,10 +53,10 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    payee and method group: the changed cells are rewritten in place. Otherwise the payment moves to its new day block
    and its old row is emptied, so no rows shift and every `=SUM` stays right.
 
-   **Posted** (AR, admin): a checkbox next to Taxable for "entered in NetSuite", with its filter (Posted / Not posted)
-   and grouping. Under Taxable and Posted the ledger shows who set them and when; the payment's side panel has the full
+   **Posted** (AR, admin): a box next to Taxable for the NetSuite verification number; a payment with a number is posted
+   (clear it to un-post). Filter Posted / Not posted, grouping, and the ledger search finds a payment by its number. Under Taxable and Posted the ledger shows who set them and when; the payment's side panel has the full
    **History** (who changed Taxable / Posted, splits, corrections, attachments, delete / restore). The Excel ledger
-   table and the CSV carry Taxable set by / Posted / Posted by / Posted at. Posted isn't written to the workbook.
+   table and the CSV carry Taxable set by / NetSuite # / Posted by / Posted at. Posted isn't written to the workbook.
 
    **Split by invoice** (AR, admin): when one payment pays several invoices (a 10,000 check for invoices of 2,000,
    4,000 and 4,000) and not all are taxable, *Taxable → Split by invoice…* lists each invoice with its amount and

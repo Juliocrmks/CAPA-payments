@@ -98,13 +98,13 @@ def test_posted_to_netsuite_and_who_did_it(admin, client):
     admin.post("/api/users", json={"email": "post.ro@example.com", "role": "readonly", "password": "pw"})
     ar = login(client, "post.ar@example.com", "pw")[0]; ro = login(client, "post.ro@example.com", "pw")[0]
     assert ar.patch(f"/api/ledger/{pid}", json={"taxable": "Yes"}).status_code == 200
-    r = ar.patch(f"/api/ledger/{pid}", json={"posted": "Yes"}).json()
+    r = ar.patch(f"/api/ledger/{pid}", json={"posted": " NS-48213 "}).json()
     assert r["excel"] == "unchanged"                                                  # NetSuite status isn't written to Excel
     f = next(x for x in admin.get("/api/ledger").json()["rows"] if x["id"] == pid)["fields"]
-    assert f["posted"] == "Yes" and f["posted_by"] == "Michelle Test" and f["posted_at"][:2] == "20"
+    assert f["posted"] == "NS-48213" and f["posted_by"] == "Michelle Test" and f["posted_at"][:2] == "20"
     assert f["taxable_by"] == "Michelle Test" and f["taxable_at"]
     assert ro.patch(f"/api/ledger/{pid}", json={"posted": ""}).status_code == 403
-    assert ar.patch(f"/api/ledger/{pid}", json={"posted": "Maybe"}).status_code == 400
+    assert ar.patch(f"/api/ledger/{pid}", json={"posted": "X" * 41}).status_code == 400
     assert ar.patch(f"/api/ledger/{pid}", json={"amount": "1", "posted": ""}).status_code == 403
     # admin un-posts: the status and the person change, and the history keeps both
     admin.patch(f"/api/ledger/{pid}", json={"posted": ""})
@@ -112,11 +112,11 @@ def test_posted_to_netsuite_and_who_did_it(admin, client):
     assert f["posted"] == "" and f["posted_by"] == "admin"
     h = ro.get(f"/api/ledger/{pid}/history").json()
     edits = [(x["name"], x["detail"]) for x in h if x["action"] == "ledger_edit"]
-    assert ("admin", {"posted": ["Yes", ""]}) in edits and ("Michelle Test", {"posted": ["", "Yes"]}) in edits
+    assert ("admin", {"posted": ["NS-48213", ""]}) in edits and ("Michelle Test", {"posted": ["", "NS-48213"]}) in edits
     assert ("Michelle Test", {"taxable": ["", "Yes"]}) in edits and any(x["action"] == "submitted" or x["action"] for x in h)
     # exports carry who / when
     import openpyxl
-    ar.patch(f"/api/ledger/{pid}", json={"posted": "Yes"})
+    ar.patch(f"/api/ledger/{pid}", json={"posted": "NS-50001"})
     ws = openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={"ids": [pid]}).content))["Ledger"]
     head = [c.value for c in ws[1]]; row = {h: c.value for h, c in zip(head, ws[2])}
-    assert row["Posted to NetSuite"] == "Yes" and row["Posted by"] == "Michelle Test" and row["Taxable set by"] == "Michelle Test"
+    assert row["NetSuite #"] == "NS-50001" and row["Posted by"] == "Michelle Test" and row["Taxable set by"] == "Michelle Test"
