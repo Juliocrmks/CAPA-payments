@@ -24,8 +24,9 @@ import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } fr
 const PERIODS = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["quarter", "This quarter"], ["year", "This year"], ["all", "All time"]];
 const GROUPS = [["day", "Day received"], ["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["customer", "Company"], ["sheet", "Payee sheet"],
   ["method", "Payment method"], ["deposit_bank", "Deposit bank"], ["taxable", "Taxable"], ["posted", "Posted to NetSuite"], ["none", "No grouping"]];
-const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["ticket", "Ticket ref"],
-  ["payref", "Payment ref"], ["order", "Order #"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted (NetSuite #)"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
+// Ticket ref, payment ref and order # aren't columns (they're optional and rarely filled); they're still searchable,
+// in the payment's side panel and in the exports.
+const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted (NetSuite #)"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
 
 const iso = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
 const parse = (s) => { const [y, m, d] = (s || "").split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
@@ -255,16 +256,16 @@ export default function Ledger({ me }) {
                 group !== "none" && (
                   <TableRow key={"g" + g.key} hover onClick={() => setClosed((c) => ({ ...c, [g.key]: !isClosed }))} sx={{ cursor: "pointer", "& td": { bgcolor: "#F7F4F1", borderTop: "2px solid #E3DFDB" } }}>
                     <TableCell>{isClosed ? <ChevronRightIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}</TableCell>
-                    <TableCell colSpan={7}><b>{g.label}</b> <Typography component="span" variant="body2" color="text.secondary">· {g.rows.length} payment{g.rows.length > 1 ? "s" : ""}{subTax ? ` · taxable ${money(subTax)}` : ""}</Typography></TableCell>
+                    <TableCell colSpan={4}><b>{g.label}</b> <Typography component="span" variant="body2" color="text.secondary">· {g.rows.length} payment{g.rows.length > 1 ? "s" : ""}{subTax ? ` · taxable ${money(subTax)}` : ""}</Typography></TableCell>
                     <TableCell align="right"><b>{money(sub)}</b></TableCell>
-                    <TableCell colSpan={3} />
+                    <TableCell colSpan={4} />
                   </TableRow>),
                 ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} canPost={canPost} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} onSplit={setSplitFor} />)),
-                !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={12} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
+                !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={10} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
               ];
             })}
             <TableRow sx={{ "& td": { borderTop: "2px solid", borderColor: brand.espresso, fontWeight: 700 } }}>
-              <TableCell /><TableCell colSpan={7}>Total · {rows.length} payments</TableCell><TableCell align="right">{money(totals.all)}</TableCell><TableCell colSpan={3} />
+              <TableCell /><TableCell colSpan={4}>Total · {rows.length} payments</TableCell><TableCell align="right">{money(totals.all)}</TableCell><TableCell colSpan={4} />
             </TableRow>
           </TableBody>
         </Table>}
@@ -473,9 +474,6 @@ function LedgerRow({ r, isAdmin, canTax, canPost, banks, onEdit, onOpen, onSplit
       <TableCell sx={{ fontWeight: 600 }}>{f.customer}</TableCell>
       <TableCell><SheetChip sheet={r.sheet} /></TableCell>
       <TableCell><MethodChip method={f.method} /></TableCell>
-      <TableCell>{f.ticket}</TableCell>
-      <TableCell>{f.payref || (f.method === "wire" ? fdate(f.received, { month: "short", day: "numeric" }) : "")}</TableCell>
-      <TableCell>{f.order}</TableCell>
       <TableCell align="right" sx={{ fontWeight: 600 }}>{money(f.amount)}
         {!inDaily(f) && <Typography variant="caption" color="text.secondary" display="block" sx={{ fontWeight: 400, whiteSpace: "nowrap" }}>not in daily total</Typography>}</TableCell>
       <TableCell>{canTax ? <TaxSelect r={r} onEdit={onEdit} onSplit={onSplit} /> : taxText(f)}<ByLine name={f.taxable && f.taxable_by} at={f.taxable_at} /></TableCell>
