@@ -790,13 +790,13 @@ EXCEL_KEYS = ["sheet", "received", "customer", "order", "ticket", "payref", "met
 EDITABLE = EXCEL_KEYS + ["check_no", "bank", "invoice", "confirmation", "memo", "posted", "daily_total"]
 
 def in_daily_total(f):
-    """'Affects daily total': on for every payment unless someone turned it off, except a negative amount deposited to
-    BPS (a withdrawal there), which is off unless someone turned it on. daily_total: '' = automatic, 'Yes' / 'No' = chosen."""
+    """'Affects daily total': on for every payment unless someone turned it off, except a negative amount (a withdrawal)
+    at any bank other than BPS, which is off unless someone turned it on. daily_total: '' = automatic, 'Yes' / 'No' = chosen."""
     v = f.get("daily_total") or ""
     if v in ("Yes", "No"): return v == "Yes"
     try: neg = float(str(f.get("amount") or 0).replace(",", "")) < 0
     except ValueError: neg = False
-    return not (neg and (f.get("deposit_bank") or "").strip().upper().startswith("BPS"))
+    return not (neg and not (f.get("deposit_bank") or "").strip().upper().startswith("BPS"))
 
 def _who(user): return user.get("display_name") or user.get("email") or user["username"]
 def _now(): return datetime.datetime.now().isoformat(timespec="seconds")

@@ -113,7 +113,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
             <Box>
               <FormControlLabel sx={{ m: 0 }} label="Affects daily total"
                 control={<Checkbox size="small" checked={inDaily(f)} onChange={(e) => set("daily_total", e.target.checked ? "Yes" : "No", true)} />} />
-              {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal deposited to BPS</Typography>}
+              {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal not at BPS</Typography>}
             </Box>
             {(EXTRA[f.method] || []).map(([k, l, t]) => tf(k, l, t))}
           </Box>

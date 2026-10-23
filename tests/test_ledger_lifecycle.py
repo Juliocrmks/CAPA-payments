@@ -148,18 +148,19 @@ def test_split_payment_by_invoice(admin, client):
     assert ar.post(url, json={"lines": []}).status_code == 200 and row(admin, pid)["fields"]["taxable"] == ""
 
 def test_affects_daily_total(admin, client):
-    """On for every payment by default; a negative BPS amount is off unless someone turns it on; anyone's choice wins.
-    Payments left out don't count in the daily bank totals sheet."""
+    """On for every payment by default; a negative amount at any bank other than BPS is off unless someone turns it on;
+    anyone's choice wins. Payments left out don't count in the daily bank totals sheet."""
     from checkflow.app import in_daily_total
-    assert in_daily_total({"amount": "-40", "deposit_bank": "BPS"}) is False
-    assert in_daily_total({"amount": "-40", "deposit_bank": "TNB"}) and in_daily_total({"amount": "40", "deposit_bank": "BPS"})
-    assert in_daily_total({"amount": "-40", "deposit_bank": "BPS", "daily_total": "Yes"})
-    assert not in_daily_total({"amount": "500", "deposit_bank": "TNB", "daily_total": "No"})
+    assert in_daily_total({"amount": "-40", "deposit_bank": "BPS"})                      # BPS withdrawals count
+    assert not in_daily_total({"amount": "-40", "deposit_bank": "TNB"}) and not in_daily_total({"amount": "-40", "deposit_bank": ""})
+    assert in_daily_total({"amount": "40", "deposit_bank": "TNB"})
+    assert in_daily_total({"amount": "-40", "deposit_bank": "LSB", "daily_total": "Yes"})
+    assert not in_daily_total({"amount": "500", "deposit_bank": "BPS", "daily_total": "No"})
     admin.post("/api/settings/practice")
-    a = sent(admin, customer="DAILY IN CO", amount="500.00", received="2026-11-14", deposit_bank="BPS")
-    b = sent(admin, customer="WITHDRAWAL", amount="-120.00", received="2026-11-14", deposit_bank="BPS", method="cash")
+    a = sent(admin, customer="DAILY IN CO", amount="500.00", received="2026-11-14", deposit_bank="TNB")
+    b = sent(admin, customer="WITHDRAWAL", amount="-120.00", received="2026-11-14", deposit_bank="TNB", method="cash")
     day = lambda: [c.value for c in openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={"ids": [a, b]}).content))["Daily bank totals"][2]]
-    assert day()[2] == 1 and day()[6] == 500                                            # the BPS withdrawal is left out
+    assert day()[2] == 1 and day()[6] == 500                                            # the TNB withdrawal is left out
     assert admin.patch(f"/api/ledger/{b}", json={"daily_total": "Yes"}).json()["excel"] == "unchanged"
     assert day()[2] == 2 and day()[6] == 380
     assert admin.patch(f"/api/ledger/{b}", json={"daily_total": "maybe"}).status_code == 400

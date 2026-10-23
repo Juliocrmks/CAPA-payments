@@ -83,7 +83,7 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    computed from the ledger on screen, so it changes the moment a Taxable, bank or amount is edited.
 
    **Affects daily total**: a checkbox on every payment (review card and side panel; admins change it), on by default.
-   A negative amount deposited to **BPS** (a withdrawal there) starts off. Payments with it off are left out of the
+   A negative amount (a withdrawal) at any bank other than **BPS**, or with no bank, starts off; BPS withdrawals count. Payments with it off are left out of the
    daily bank totals (on screen, with a note, and in the export's daily sheet) and marked "not in daily total" in the
    ledger; the ledger itself still lists and totals them.
 

@@ -26,7 +26,7 @@ const GROUPS = [["day", "Day received"], ["week", "Week"], ["month", "Month"], [
   ["method", "Payment method"], ["deposit_bank", "Deposit bank"], ["taxable", "Taxable"], ["posted", "Posted to NetSuite"], ["none", "No grouping"]];
 // Ticket ref, payment ref and order # aren't columns (they're optional and rarely filled); they're still searchable,
 // in the payment's side panel and in the exports.
-const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted (NetSuite #)"], ["deposit_bank", "Deposit bank"], ["row", "Excel row", "right"]];
+const COLS = [["received", "Received"], ["customer", "Customer"], ["sheet", "Sheet"], ["method", "Method"], ["amount", "Amount", "right"], ["taxable", "Taxable"], ["posted", "Posted (NetSuite #)"], ["deposit_bank", "Deposit bank"]];
 
 const iso = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
 const parse = (s) => { const [y, m, d] = (s || "").split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
@@ -258,14 +258,14 @@ export default function Ledger({ me }) {
                     <TableCell>{isClosed ? <ChevronRightIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}</TableCell>
                     <TableCell colSpan={4}><b>{g.label}</b> <Typography component="span" variant="body2" color="text.secondary">· {g.rows.length} payment{g.rows.length > 1 ? "s" : ""}{subTax ? ` · taxable ${money(subTax)}` : ""}</Typography></TableCell>
                     <TableCell align="right"><b>{money(sub)}</b></TableCell>
-                    <TableCell colSpan={4} />
+                    <TableCell colSpan={3} />
                   </TableRow>),
                 ...(isClosed ? [] : g.rows.slice(0, limit).map((r) => <LedgerRow key={r.id} r={r} isAdmin={isAdmin} canTax={canTax} canPost={canPost} banks={data.deposit_banks} onEdit={edit} onOpen={() => setDetail(r)} onSplit={setSplitFor} />)),
-                !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={10} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
+                !isClosed && g.rows.length > limit && <TableRow key={"m" + g.key}><TableCell colSpan={9} align="center"><Button size="small" onClick={() => setMore((m) => ({ ...m, [g.key]: true }))}>Show all {g.rows.length}</Button></TableCell></TableRow>,
               ];
             })}
             <TableRow sx={{ "& td": { borderTop: "2px solid", borderColor: brand.espresso, fontWeight: 700 } }}>
-              <TableCell /><TableCell colSpan={4}>Total · {rows.length} payments</TableCell><TableCell align="right">{money(totals.all)}</TableCell><TableCell colSpan={4} />
+              <TableCell /><TableCell colSpan={4}>Total · {rows.length} payments</TableCell><TableCell align="right">{money(totals.all)}</TableCell><TableCell colSpan={3} />
             </TableRow>
           </TableBody>
         </Table>}
@@ -481,9 +481,9 @@ function LedgerRow({ r, isAdmin, canTax, canPost, banks, onEdit, onOpen, onSplit
         <PostedBox r={r} canPost={canPost} onEdit={onEdit} />
         <ByLine name={f.posted && f.posted_by} at={f.posted_at} />
       </TableCell>
-      <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}</TableCell>
-      <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
-        {r.pending ? <Tooltip title={r.note || "Waiting for the workbook to be closed"}><Chip size="small" label="pending" sx={{ bgcolor: warnBg, color: "#8a5300" }} /></Tooltip> : r.row}
+      <TableCell>{isAdmin ? <BankSelect r={r} banks={banks} onEdit={onEdit} /> : f.deposit_bank}
+        {r.pending && <Tooltip title={r.note || "Waiting for the workbook to be closed"}>
+          <Chip size="small" label="Excel pending" sx={{ mt: .5, display: "flex", width: "fit-content", bgcolor: warnBg, color: "#8a5300" }} /></Tooltip>}
       </TableCell>
     </TableRow>
   );
@@ -562,7 +562,7 @@ function DetailDrawer({ r, isAdmin, canTax, canPost, canDownload, canAttach, onS
           {isAdmin ? <FormControlLabel sx={{ m: 0 }} label="Affects daily total"
             control={<Checkbox size="small" checked={inDaily(f)} onChange={(e) => onEdit(r, "daily_total", e.target.checked ? "Yes" : "No")} />} />
             : <Typography variant="body2">{inDaily(f) ? "Counted" : "Left out"}</Typography>}
-          {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal to BPS</Typography>}</Box>
+          {!f.daily_total && !inDaily(f) && <Typography variant="caption" color="text.secondary" display="block">Off: a withdrawal not at BPS</Typography>}</Box>
       </Stack>
       {f.invoices?.length > 0 && <InvoiceTable f={f} onEditSplit={canTax ? () => onSplit(r) : null} />}
       {r.pending && <Alert severity="warning" sx={{ mb: 2 }}>{r.note || "Waiting to be written to Excel."}</Alert>}
