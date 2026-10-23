@@ -63,6 +63,7 @@ def init():
                      WHERE imported=1 AND COALESCE(import_batch, '')='' AND
                            (SELECT s.workbook FROM submissions s WHERE s.payment_id=payments.id) LIKE 'upload:%'""")
         c.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
+        _times_to_local(c)
         for k, v in DEFAULT_SETTINGS.items(): c.execute("INSERT OR IGNORE INTO settings VALUES(?,?)", (k, v))
         if not c.execute("SELECT 1 FROM payees").fetchone():
             for name, sheet, aliases in SEED_PAYEES:
@@ -76,6 +77,32 @@ def init():
                 c.execute("""UPDATE payments SET fields=json_set(fields, '$.sheet', ?)
                              WHERE UPPER(json_extract(fields, '$.sheet'))=?""", (new, old))
             c.execute("INSERT OR REPLACE INTO meta VALUES('sheet_names_v2', '1')")
+
+TIME_COLS = [("users", "created_at"), ("users", "last_login"), ("documents", "created_at"), ("payments", "created_at"),
+             ("payments", "updated_at"), ("payments", "submitted_at"), ("payments", "deleted_at"), ("submissions", "written_at"),
+             ("customers", "updated_at"), ("accounts", "updated_at"), ("reset_requests", "created_at"), ("reset_requests", "handled_at"),
+             ("audit", "ts")]
+_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
+
+def _times_to_local(c, force=False):
+    """Once: timestamps written while the app followed a UTC machine clock become the app's time zone (Central).
+    A machine already on local time (a Mac in Texas) has nothing to convert. Dates without a time are left alone."""
+    from .config import SYSTEM_IS_UTC, TZ
+    if c.execute("SELECT 1 FROM meta WHERE key='times_local_v1'").fetchone(): return
+    if (SYSTEM_IS_UTC or force) and TZ and TZ.upper() not in ("UTC", "ETC/UTC"):
+        def conv(v):
+            if not isinstance(v, str) or not _STAMP.match(v): return v
+            t = datetime.datetime.fromisoformat(v).replace(tzinfo=datetime.timezone.utc)
+            return datetime.datetime.fromtimestamp(t.timestamp()).isoformat(timespec="seconds")
+        for table, col in TIME_COLS:
+            try: rows = c.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} LIKE '____-__-__T%'").fetchall()
+            except sqlite3.OperationalError: continue
+            for r in rows: c.execute(f"UPDATE {table} SET {col}=? WHERE rowid=?", (conv(r[1]), r[0]))
+        for r in c.execute("SELECT id, fields FROM payments WHERE fields LIKE '%posted_at%' OR fields LIKE '%taxable_at%'").fetchall():
+            f = json.loads(r["fields"] or "{}")
+            g = {k: (conv(v) if k in ("posted_at", "taxable_at") else v) for k, v in f.items()}
+            if g != f: c.execute("UPDATE payments SET fields=? WHERE id=?", (json.dumps(g), r["id"]))
+    c.execute("INSERT OR REPLACE INTO meta VALUES('times_local_v1', '1')")
 
 def _migrate_v1(c):
     """v1 (single 'checks' table) -> v2 payments. Runs once; the old table is renamed, not deleted."""

@@ -86,3 +86,19 @@ def test_import_customers_and_history(admin):
 def test_audit_records_actions(admin):
     acts = [a["action"] for a in admin.get("/api/audit").json()]
     assert "login" in acts
+
+def test_times_follow_central_time_and_old_utc_stamps_convert_once():
+    import json, datetime, time
+    from checkflow import db, config
+    assert config.TZ == "America/Chicago" and time.tzname[0] in ("CST", "CDT", "America")       # the app's clock is Central
+    with db.conn() as c:
+        c.execute("DELETE FROM meta WHERE key='times_local_v1'")
+        c.execute("INSERT INTO audit(ts, username, action) VALUES('2026-07-01T17:00:00', 'tz', 'tz_test')")
+        pid = c.execute("INSERT INTO payments(status, fields, created_at, submitted_at) VALUES('submitted', ?, '2026-01-15T18:30:00', '2026-01-15')",
+                        (json.dumps({"posted_at": "2026-07-01T17:00:00"}),)).lastrowid
+        db._times_to_local(c, force=True); db._times_to_local(c, force=True)            # converts once only
+        assert c.execute("SELECT ts FROM audit WHERE action='tz_test'").fetchone()[0] == "2026-07-01T12:00:00"   # CDT, UTC-5
+        r = c.execute("SELECT created_at, submitted_at, fields FROM payments WHERE id=?", (pid,)).fetchone()
+        assert (r[0], r[1]) == ("2026-01-15T12:30:00", "2026-01-15")                     # CST, UTC-6; a plain date stays
+        assert json.loads(r[2])["posted_at"] == "2026-07-01T12:00:00"
+        c.execute("DELETE FROM payments WHERE id=?", (pid,)); c.execute("DELETE FROM audit WHERE action='tz_test'")

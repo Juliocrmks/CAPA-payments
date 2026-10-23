@@ -1,5 +1,15 @@
 """Paths and static configuration. Everything runtime-editable lives in the settings table."""
-import os
+import os, time
+
+# Time zone. CAPA works in Central Time, but servers usually run on UTC: every timestamp, 'today' (the date a payment is
+# received) and backup name follows CHECKFLOW_TZ instead of the machine's clock setting. Daylight saving is handled.
+# The POSIX form is the fallback where the time-zone database isn't installed.
+SYSTEM_IS_UTC = "TZ" not in os.environ and time.timezone == 0 and not time.daylight     # how the machine itself is set
+TZ = os.environ.get("CHECKFLOW_TZ", "America/Chicago")
+if TZ and hasattr(time, "tzset"):
+    os.environ["TZ"] = TZ if os.path.exists(os.path.join("/usr/share/zoneinfo", TZ)) or "/" not in TZ else (
+        "CST6CDT,M3.2.0,M11.1.0" if TZ == "America/Chicago" else TZ)
+    time.tzset()
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.environ.get("CHECKFLOW_DATA", os.path.join(ROOT, "data"))

@@ -108,6 +108,12 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    (other sheets are copied as they are), and the year in title rows can be changed. Payments stay linked to the
    workbook they were written to: corrections, deletes and restores of last year's payments go to last year's file.
 
+## Time zone
+
+CheckFlow keeps Central Time (`CHECKFLOW_TZ`, default `America/Chicago`, daylight saving included) whatever the server's
+clock is set to: timestamps, who-did-what times, "today" for a payment's received date and backup names. Times written
+earlier by a server on UTC are converted once, the first time this version starts.
+
 ## Sign-in and users
 
 People sign in with their **email**. Three roles:
@@ -150,7 +156,7 @@ checkflow/
                            ledger_import.py (spreadsheet upload: workbook or plain table, date checks, duplicates)
 frontend/                  React 19 + MUI 7 source (npm install && npm run build → static/)
 static/                    built UI, committed so no Node.js is needed to run
-tests/                     pytest suite (101 tests)
+tests/                     pytest suite (102 tests)
 tools/benchmark.py         extraction accuracy against the real packets' printed day sheets
 ```
 
