@@ -687,7 +687,6 @@ def new_payment(p: NewPayment, user=Depends(require_admin)):
     if f.get("amount") not in (None, ""):                      # '$1,000.5' typed by hand -> '1000.50', like edits do
         try: f["amount"] = f"{float(str(f['amount']).replace(',', '').replace('$', '').strip()):.2f}"
         except ValueError: raise HTTPException(400, "Amount must be a number.")
-    if f.get("customer"): f.update({k: v for k, v in db.registry().defaults_for(f["customer"], f["method"]).items() if not f.get(k)})
     pid = db.add_payment(None, f, {}, ["manual"], [])
     db.audit(user["username"], "payment_added", pid)
     return db.get_payment(pid)

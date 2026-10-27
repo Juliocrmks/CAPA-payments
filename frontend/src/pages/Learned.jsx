@@ -11,8 +11,8 @@ import { SheetChip, Triangles, useToast } from "../components/common";
 
 // What CheckFlow remembers so the second time is faster. Everything here is editable.
 const TABLES = {
-  customers: { title: "Customers", key: (r) => r.name, help: "Names exactly as the sheets write them. Scanned names snap to these. Defaults fill Taxable / Deposit bank on new payments.",
-    cols: [["name", "Customer"], ["sheets", "Sheets"], ["taxable_default", "Taxable default", "tax"], ["deposit_bank_default", "Deposit bank default"], ["source", "From", "ro"]] },
+  customers: { title: "Customers", key: (r) => r.name, help: "Names exactly as the sheets write them. Scanned names snap to these.",
+    cols: [["name", "Customer"], ["sheets", "Sheets"], ["source", "From", "ro"]] },
   accounts: { title: "Bank accounts", key: (r) => `${r.routing}|${r.account}`, help: "Learned from checks you confirmed: the same routing + account is the same customer next time.",
     cols: [["customer", "Customer"], ["routing", "Routing #"], ["account", "Account #"], ["updated_at", "Last seen", "ro"]] },
   payees: { title: "Payees → sheets", key: (r) => String(r.id), help: "Which workbook sheet each division's payments go to. Aliases match file names like 'RVP OCT_09_26.pdf'.",

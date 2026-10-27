@@ -151,7 +151,5 @@ def process(data, filename, reg, received=None, progress=None):
         if not F.get("sheet") and sheet_hint: F["payee"], F["sheet"] = sheet_hint
         if not F.get("sheet"): p["warns"]["sheet"] = "Pick the payee sheet."
         if F.get("customer") and reg.is_known_customer(F["customer"]): p["warns"].pop("customer", None)
-        d = reg.defaults_for(F.get("customer", ""), F.get("method", ""))
-        for k, v in d.items():
-            if v and not F.get(k): F[k] = v
+        # Taxable and Deposit bank start empty (Not set / None): a person chooses them
     return dict(pages=pages, payments=pays, received=received)

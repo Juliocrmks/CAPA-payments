@@ -42,7 +42,7 @@ SEED_PAYEES = [
 SEED_BANKS = {"114915447": "Rio Bank", "114917623": "IBC Bank"}
 DEFAULT_SETTINGS = {
     "ignore_sheets": "Sheet1, Sheet2, FORMAT, DEPOSIT TAXES",
-    "deposit_bank_check": "TNB",
+    "deposit_bank_check": "",
     "deposit_bank_cash": "",
     "deposit_bank_card": "",
     "deposit_bank_ach": "",

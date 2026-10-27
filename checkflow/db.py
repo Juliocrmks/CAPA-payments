@@ -159,15 +159,6 @@ class DbRegistry(StaticRegistry):
             for r in c.execute("SELECT * FROM memos"):
                 if r["pattern"] and nkey(r["pattern"]) in k: return r["customer"]
         return None
-    def defaults_for(self, customer, method):
-        d = {"deposit_bank": get_setting("deposit_bank_" + (method or "check"), "")}
-        with conn() as c:
-            r = c.execute("SELECT taxable_default, deposit_bank_default FROM customers WHERE name=?", ((customer or "").upper(),)).fetchone()
-        if r:
-            if r["taxable_default"]: d["taxable"] = r["taxable_default"]
-            if r["deposit_bank_default"]: d["deposit_bank"] = r["deposit_bank_default"]
-        return d
-
     def learn(self, f, sheet=None):
         """Remember what a person confirmed: account -> customer, bank names, the customer itself, memo -> customer."""
         cust = (f.get("customer") or "").strip().upper()

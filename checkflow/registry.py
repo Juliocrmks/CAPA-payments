@@ -65,7 +65,3 @@ class StaticRegistry:
         k = nkey(name)
         return bool(k) and any(nkey(c) == k for c in self.customers())
 
-    def defaults_for(self, customer, method):
-        d = {"deposit_bank": self._dep.get(method, "")}
-        d.update({k: v for k, v in self._cust_defaults.get(nkey(customer), {}).items() if v})
-        return d

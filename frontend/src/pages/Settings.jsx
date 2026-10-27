@@ -3,7 +3,7 @@ import { Box, Paper, Stack, Typography, TextField, Button, Alert, MenuItem, Swit
   TableRow, TableCell, Chip, Dialog, DialogTitle, DialogContent, DialogActions, ToggleButtonGroup, ToggleButton, Divider } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
-import { api, METHODS, fdate } from "../api";
+import { api, fdate } from "../api";
 import { Triangles, SheetChip, useToast } from "../components/common";
 
 function Section({ title, help, children }) {
@@ -150,7 +150,6 @@ export default function Settings({ me }) {
     catch (e) { say(e.message, "error"); }
   };
   if (!s) return null;
-  const banks = (draft.deposit_banks || "").split(",").map((x) => x.trim()).filter(Boolean);
 
   return (
     <Stack spacing={2.5}>
@@ -158,18 +157,12 @@ export default function Settings({ me }) {
 
       <Workbooks s={s} draft={draft} set={set} save={save} say={say} onSettings={(r) => { setS(r); setDraft(r); }} />
 
-      <Section title="Deposit banks" help="Banks payments are deposited into, and the default for each payment method. Shown as choices on payments and in the ledger.">
+      <Section title="Deposit banks" help="Banks payments are deposited into, shown as choices on payments and in the ledger. New payments start with no bank (None) and Taxable not set: a person picks them.">
         <Stack spacing={2}>
           <TextField label="Deposit banks" value={draft.deposit_banks || ""} onChange={set("deposit_banks")} helperText="Comma separated, e.g. TNB, LSB, LONE STAR, BPS, MID" />
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", md: "repeat(5, 1fr)" }, gap: 1.5 }}>
-            {Object.entries(METHODS).map(([k, l]) => (
-              <TextField key={k} select label={`${l} default`} value={draft["deposit_bank_" + k] || ""} onChange={set("deposit_bank_" + k)}>
-                <MenuItem value="">None</MenuItem>{banks.map((b) => <MenuItem key={b} value={b}>{b}</MenuItem>)}
-              </TextField>))}
-          </Box>
           <FormControlLabel control={<Switch checked={draft.keep_sensitive_pages === "1"} onChange={(e) => set("keep_sensitive_pages")(e.target.checked ? "1" : "0")} />}
             label="Keep ID and card photos readable (off: they're stored blurred)" />
-          <Box><Button variant="contained" onClick={() => save(["deposit_banks", ...Object.keys(METHODS).map((k) => "deposit_bank_" + k), "keep_sensitive_pages"])}>Save</Button></Box>
+          <Box><Button variant="contained" onClick={() => save(["deposit_banks", "keep_sensitive_pages"])}>Save</Button></Box>
         </Stack>
       </Section>
 

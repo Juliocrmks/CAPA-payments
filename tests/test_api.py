@@ -67,10 +67,10 @@ def test_excel_open_keeps_edit_pending(admin):
     assert push_to_excel()[0] == 0
     assert not next(x for x in admin.get("/api/ledger").json()["rows"] if x["id"] == a["id"])["pending"]
 
-def test_learned_crud_and_customer_defaults(admin):
+def test_learned_crud_and_no_prefilled_taxable_or_bank(admin):
     admin.put("/api/learned/customers", json={"name": "Default Co", "taxable_default": "Yes", "deposit_bank_default": "MID"})
     p = admin.post("/api/payments", json={"fields": {"customer": "DEFAULT CO", "method": "check", "amount": "1"}}).json()
-    assert p["fields"]["taxable"] == "Yes" and p["fields"]["deposit_bank"] == "MID"
+    assert p["fields"]["taxable"] == "" and p["fields"]["deposit_bank"] == ""         # Not set / None until a person picks
     admin.put("/api/learned/payees", json={"name": "Test Division", "sheet": "VCP", "aliases": "TD"})
     assert db.registry().payee_from_filename("TD OCT_10_26.pdf") == ("Test Division", "VCP")
     admin.delete("/api/learned/customers?key=DEFAULT%20CO")

@@ -104,7 +104,8 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
 5. **Learned data** (admin): customers (import names from the workbook so scans snap to them), bank account →
    customer, division → sheet, banks, wire-posting text → customer. Everything confirmed is learned; everything is
    editable. **Import from workbook** can also bring past rows into the ledger once (optional migration).
-6. **Settings** (admin): workbook, deposit banks and per-method defaults, sign-in, users, activity log.
+6. **Settings** (admin): workbook, deposit banks, sign-in, users, activity log. New payments start with Taxable *Not set*
+   and Deposit bank *None*; a person picks them.
 
    **Workbooks**: the list shows every workbook CheckFlow can use (its own `data/workbooks` folder, the practice
    workbook, the folder of the workbook in use, and every workbook payments were written to) with **Use this** and
