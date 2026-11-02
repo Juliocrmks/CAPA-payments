@@ -77,6 +77,14 @@ def init():
                 c.execute("""UPDATE payments SET fields=json_set(fields, '$.sheet', ?)
                              WHERE UPPER(json_extract(fields, '$.sheet'))=?""", (new, old))
             c.execute("INSERT OR REPLACE INTO meta VALUES('sheet_names_v2', '1')")
+        # deposit banks agreed with the business (Nov 2026): add any of these missing from the saved list, once
+        if not c.execute("SELECT 1 FROM meta WHERE key='deposit_banks_v2'").fetchone():
+            r = c.execute("SELECT value FROM settings WHERE key='deposit_banks'").fetchone()
+            have = [b.strip() for b in ((r and r["value"]) or "").split(",") if b.strip()]
+            up = {b.upper() for b in have}
+            have += [b for b in ("LSB", "LSBPAY", "TNB", "MID", "REGIONS", "BPS", "PETTY CASH") if b not in up]
+            c.execute("INSERT OR REPLACE INTO settings VALUES('deposit_banks', ?)", (", ".join(have),))
+            c.execute("INSERT OR REPLACE INTO meta VALUES('deposit_banks_v2', '1')")
 
 TIME_COLS = [("users", "created_at"), ("users", "last_login"), ("documents", "created_at"), ("payments", "created_at"),
              ("payments", "updated_at"), ("payments", "submitted_at"), ("payments", "deleted_at"), ("submissions", "written_at"),

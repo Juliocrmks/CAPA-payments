@@ -9,7 +9,7 @@ def login(client, who, pw):
     return c, r
 
 def sent_payment(admin, **f):
-    base = dict(method="check", customer="ROLE TEST CO", sheet="MVC", amount="200.00", received="2026-11-10", payref="5501")
+    base = dict(method="check", deposit_bank="TNB", customer="ROLE TEST CO", sheet="MVC", amount="200.00", received="2026-11-10", payref="5501")
     p = admin.post("/api/payments", json={"fields": base | f}).json()
     admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
     assert admin.post("/api/submit", json={"ids": [p["id"]]}).json()["written"] == 1

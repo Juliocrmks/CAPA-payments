@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from checkflow.excel.layout import Layout
 
 def send(admin, **f):
-    base = dict(method="check", customer="EDIT CO", sheet="MVC", amount="100.00", received="2026-11-02", payref="7001")
+    base = dict(method="check", deposit_bank="TNB", customer="EDIT CO", sheet="MVC", amount="100.00", received="2026-11-02", payref="7001")
     p = admin.post("/api/payments", json={"fields": base | f}).json()
     admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
     assert admin.post("/api/submit", json={"ids": [p["id"]]}).json()["written"] == 1

@@ -15,10 +15,14 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter as L
 
 DEFAULT_RATE = 0.0825
-# Deposit bank names as typed in CheckFlow -> the column they go in on the report
+# Deposit bank names as typed in CheckFlow -> the deposit column they go in on the report
 ALIASES = {"LONE STAR": "LSB", "LONE STAR BANK": "LSB", "MID": "MIDFIRST", "MID FIRST": "MIDFIRST", "TEXAS NATIONAL": "TNB",
-           "TEXAS NATIONAL BANK": "TNB"}
-PREFERRED = ["LSB", "TNB", "MIDFIRST", "BPS"]
+           "TEXAS NATIONAL BANK": "TNB", "LSB PAY": "LSBPAY", "LSB PAYROLL": "LSBPAY", "PETTY": "PETTY CASH", "REGIONS BANK": "REGIONS"}
+PREFERRED = ["LSB", "LSBPAY", "TNB", "MIDFIRST", "REGIONS", "BPS", "PETTY CASH"]
+# Deposit column -> the bank whose taxes it counts toward (business decision, Nov 2 2026): LSBPAY, PETTY CASH and BPS
+# deposits are Lone Star Bank for taxes. MIDFIRST and REGIONS are different banks, each taxed on its own.
+TAX_BANK = {"LSBPAY": "LSB", "PETTY CASH": "LSB", "BPS": "LSB"}
+NON_TAXABLE = {"VCP"}           # companies whose income is never taxable, whatever Taxable says
 BANK_TITLES = {"LSB": "LONE STAR BANK", "TNB": "TEXAS NATIONAL BANK"}
 METHODS = {"check": "Check", "cash": "Cash", "card": "Credit card", "ach": "ACH / e-check", "wire": "Wire transfer"}
 
@@ -46,6 +50,8 @@ def bank_groups(deposit_banks):
         if g and g not in gs: gs.append(g)
     return sorted(gs, key=lambda g: (PREFERRED.index(g) if g in PREFERRED else len(PREFERRED), gs.index(g)))
 
+def tax_bank(group): return TAX_BANK.get(group, group)
+
 def _num(v):
     try: return float(str(v or 0).replace(",", "") or 0)
     except ValueError: return 0.0
@@ -60,7 +66,10 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     mon = day - dt.timedelta(days=day.weekday())
     week = [mon + dt.timedelta(k) for k in range((day - mon).days + 1)]
     groups = bank_groups(deposit_banks)
-    taxed = groups                 # every deposit bank, BPS included, gets taxable income / withhold / TAXED
+    taxed = []                     # the tax blocks: each deposit column's tax bank, LSB first
+    for g in groups:
+        if tax_bank(g) not in taxed: taxed.append(tax_bank(g))
+    folded = {t: [g for g in groups if g != t and tax_bank(g) == t] for t in taxed}
 
     pays = []
     for r in rows:
@@ -80,26 +89,31 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
 
     # ---------------- Payments
     cols = ["Date", "Company", "Customer", "Method", "Payment ref", "Amount", "Deposit bank", "Bank group", "Taxable", "Taxable amount",
-            "Not taxable", "Taxable not set", "NetSuite #", "Posted by", "In daily total", "Split: taxable part", "Invoice split", "Taxable set by"]
+            "Not taxable", "Taxable not set", "NetSuite #", "Posted by", "In daily total", "Split: taxable part", "Invoice split", "Taxable set by",
+            "Tax bank"]
     for i, h in enumerate(cols, 1): hdr(pay.cell(1, i), h)
     pay.row_dimensions[1].height = 28
     splits = []
     for r, (d, co, pid, f) in enumerate(pays, 2):
         g = group_of(f.get("deposit_bank"))
+        col = g if g in groups else ("NO BANK" if not g else "OTHER")
         tax = f.get("taxable") or ""
         inv = f.get("invoices") or []
         split = "; ".join(f"{l.get('invoice', '')} {_num(l.get('amount')):,.2f} {'taxable' if l.get('taxable') == 'Yes' else 'not taxable'}" for l in inv)
         vals = {1: d, 2: co, 3: f.get("customer") or "", 4: METHODS.get(f.get("method"), f.get("method") or ""),
                 5: f.get("check_no") or f.get("payref") or "", 6: _num(f.get("amount")), 7: f.get("deposit_bank") or "",
-                8: g if g in groups else ("NO BANK" if not g else "OTHER"), 9: tax,
+                8: col, 9: tax,
                 13: f.get("posted") or "", 14: (f.get("posted_by") or "") if f.get("posted") else "",
                 15: "Yes" if in_daily(f) else "No", 16: _num(f.get("taxable_amount")) if tax == "Partial" else None,
-                17: split, 18: (f.get("taxable_by") or "") if tax else ""}
+                17: split, 18: (f.get("taxable_by") or "") if tax else "", 19: tax_bank(col) if col in groups else col}
         for c, v in vals.items():
             pay.cell(r, c, v).font = BLUE if c in (6, 7, 9, 15, 16) else font()
-        pay.cell(r, 10, f'=IF(I{r}="Yes",F{r},IF(I{r}="Partial",P{r},0))').font = font()
-        pay.cell(r, 11, f'=IF(I{r}="",0,F{r}-J{r})').font = font()
-        pay.cell(r, 12, f'=IF(I{r}="",F{r},0)').font = font()
+        if co in NON_TAXABLE:                               # e.g. VCP: all of it is not taxable
+            pay.cell(r, 10, 0).font = font(); pay.cell(r, 11, f"=F{r}").font = font(); pay.cell(r, 12, 0).font = font()
+        else:
+            pay.cell(r, 10, f'=IF(I{r}="Yes",F{r},IF(I{r}="Partial",P{r},0))').font = font()
+            pay.cell(r, 11, f'=IF(I{r}="",0,F{r}-J{r})').font = font()
+            pay.cell(r, 12, f'=IF(I{r}="",F{r},0)').font = font()
         pay.cell(r, 1).number_format = "MMM/DD/YY"
         for c in (6, 10, 11, 12, 16): pay.cell(r, c).number_format = NUM
         for l in inv: splits.append((d, co, f.get("customer") or "", _num(f.get("amount")), l))
@@ -108,8 +122,9 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     for c in (6, 10, 11, 12):
         x = pay.cell(n + 1, c, f"=SUBTOTAL(9,{L(c)}2:{L(c)}{max(n, 2)})")
         x.font = font(bold=True); x.number_format = NUM; x.border = Border(top=thin, bottom=dbl)
-    for c, w in zip(range(1, 19), (11, 9, 26, 13, 12, 13, 13, 11, 9, 13, 12, 13, 12, 17, 11, 13, 52, 17)): pay.column_dimensions[L(c)].width = w
-    pay.freeze_panes = "A2"; pay.auto_filter.ref = f"A1:R{max(n, 2)}"
+    for c, w in zip(range(1, 20), (11, 9, 26, 13, 12, 13, 13, 11, 9, 13, 12, 13, 12, 17, 11, 13, 52, 17, 11)): pay.column_dimensions[L(c)].width = w
+    pay.freeze_panes = "A2"; pay.auto_filter.ref = f"A1:S{max(n, 2)}"
+    pay["S1"].comment = Comment("The bank whose taxes this deposit counts toward: LSBPAY, PETTY CASH and BPS count as LSB.", "CheckFlow")
     pay["F1"].comment = Comment("Blue = data from the CheckFlow ledger; black = formulas.", "CheckFlow")
 
     # ---------------- Invoice splits
@@ -177,6 +192,7 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     hdr(R.cell(hb, 2), "COMPANY"); hdr(R.cell(hb, 3), "DEPOSIT")
     for j, g in enumerate(taxed):
         hdr(R.cell(hb, c_inc + j), f"{g} TAXABLE INCOME"); hdr(R.cell(hb, c_wh + j), f"WITHHOLD {g}")
+        if folded[g]: R.cell(hb, c_inc + j).comment = Comment(f"Includes {', '.join(folded[g])} deposits.", "CheckFlow")
         tc = c_taxed + 2 * j
         R.merge_cells(start_row=s, start_column=tc, end_row=s, end_column=tc + 1)
         R.cell(s, tc, BANK_TITLES.get(g, g)).font = font(bold=True); R.cell(s, tc).alignment = Alignment(horizontal="center")
@@ -190,7 +206,10 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
         R.cell(r, 3, f"=C{ra}")
         for j, g in enumerate(taxed):
             inc, tc = L(c_inc + j), c_taxed + 2 * j
-            R.cell(r, c_inc + j, "=" + sumifs("J", r, daily + f',{PR}$H:$H,"{g}"'))
+            if co in NON_TAXABLE:                           # VCP: N/A, as on the DEPOSIT TAXES sheet
+                for c in (c_inc + j, c_wh + j, tc, tc + 1): R.cell(r, c, "N/A").alignment = Alignment(horizontal="right")
+                continue
+            R.cell(r, c_inc + j, "=" + sumifs("J", r, daily + f',{PR}$S:$S,"{g}"'))
             R.cell(r, tc, f"={inc}{r}/(1+$F$3)")
             R.cell(r, tc + 1, f"={inc}{r}-{L(tc)}{r}")
             R.cell(r, c_wh + j, f"={inc}{r}-{L(tc)}{r}")
@@ -213,21 +232,26 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     R.cell(tB + 1, 2, f'=IF({U}<>0,"Taxable not set on "&TEXT({U},"$#,##0.00")&": counted as not taxable here until AR sets it.","Every payment has Taxable set.")').font = font(size=9, color="C00000")
     LO = f"{L(c_left)}{tA}"
     R.cell(tB + 2, 2, f'=IF({LO}<>0,"Left out of the daily total (Affects daily total off): "&TEXT({LO},"$#,##0.00")&". See Payments, In daily total = No.","")').font = font(size=9, color="777777")
+    nb = f'COUNTIFS({PR}$A:$A,$C$3,{PR}$O:$O,"Yes",{PR}$H:$H,"NO BANK",{PR}$F:$F,">0")'
+    R.cell(tB + 3, 2, f'=IF({nb}>0,{nb}&" payment(s) have no deposit bank, so their taxable income is not in the taxes above. Only refund and returned checks go without a bank.","")').font = font(size=9, color="C00000")
+    notes = [f"{g} taxes include {', '.join(folded[g])} deposits." for g in taxed if folded[g]]
+    notes += [f"{', '.join(sorted(NON_TAXABLE & set(cos)))} is non-taxable income: all of it counts as not taxable."] if NON_TAXABLE & set(cos) else []
+    for i, t in enumerate(notes): R.cell(tB + 4 + i, 2, t).font = font(size=9, color="777777")
 
     # Section C: week to date, tax to withhold
-    w = tB + 6
+    w = tB + 6 + len(notes)
     R.cell(w - 1, 2, "WEEK TO DATE: TAX TO WITHHOLD").font = font(bold=True, size=12)
     wc = ["COMPANY", "DATE", *[f"WITHHOLD {g}" for g in taxed], "DAILY", "WKLY"]
     for c, t in enumerate(wc, 2): hdr(R.cell(w, c), t)
     c_day, c_wk = 4 + k, 5 + k
     r = w + 1; wk_cells = []
-    for co in cos:
+    for co in [c for c in cos if c not in NON_TAXABLE]:
         first = r
         for d in week:
             R.cell(r, 2, co).font = font()
             x = R.cell(r, 3, d); x.number_format = "MMM/DD/YY"; x.font = font(); x.alignment = Alignment(horizontal="left")
             for j, g in enumerate(taxed):
-                f_ = f'SUMIFS({PR}$J:$J,{PR}$B:$B,$B{r},{PR}$A:$A,$C{r},{PR}$O:$O,"Yes",{PR}$H:$H,"{g}")'
+                f_ = f'SUMIFS({PR}$J:$J,{PR}$B:$B,$B{r},{PR}$A:$A,$C{r},{PR}$O:$O,"Yes",{PR}$S:$S,"{g}")'
                 R.cell(r, 4 + j, f"={f_}-{f_}/(1+$F$3)")
             R.cell(r, c_day, f"=SUM(D{r}:{L(c_day - 1)}{r})" if k else 0)
             for c in range(4, c_day + 1): R.cell(r, c).number_format = NUM; R.cell(r, c).font = font()

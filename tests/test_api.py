@@ -5,7 +5,7 @@ from checkflow import db
 from checkflow.excel.layout import Layout
 
 def new(admin, **f):
-    base = dict(method="check", customer="ACME BUILDERS", sheet="MVC", amount="125.00", received="2026-10-09", payref="501")
+    base = dict(method="check", deposit_bank="TNB", customer="ACME BUILDERS", sheet="MVC", amount="125.00", received="2026-10-09", payref="501")
     return admin.post("/api/payments", json={"fields": base | f}).json()
 
 def test_review_pending_validate_send_and_ledger(admin, client):

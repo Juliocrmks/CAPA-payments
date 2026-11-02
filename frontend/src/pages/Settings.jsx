@@ -159,7 +159,7 @@ export default function Settings({ me }) {
 
       <Section title="Deposit banks" help="Banks payments are deposited into, shown as choices on payments and in the ledger. New payments start with no bank (None) and Taxable not set: a person picks them.">
         <Stack spacing={2}>
-          <TextField label="Deposit banks" value={draft.deposit_banks || ""} onChange={set("deposit_banks")} helperText="Comma separated, e.g. TNB, LSB, LONE STAR, BPS, MID" />
+          <TextField label="Deposit banks" value={draft.deposit_banks || ""} onChange={set("deposit_banks")} helperText="Comma separated, e.g. LSB, LSBPAY, TNB, MID, REGIONS, BPS, PETTY CASH. For taxes on the Daily report, LSBPAY, PETTY CASH and BPS count as LSB." />
           <TextField label="Sales tax (%)" value={draft.sales_tax_rate ?? ""} onChange={set("sales_tax_rate")} sx={{ maxWidth: 220 }}
             helperText="Used by the Daily report to work out tax to withhold, e.g. 8.25" />
           <FormControlLabel control={<Switch checked={draft.keep_sensitive_pages === "1"} onChange={(e) => set("keep_sensitive_pages")(e.target.checked ? "1" : "0")} />}

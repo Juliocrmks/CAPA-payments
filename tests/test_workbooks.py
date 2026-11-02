@@ -6,7 +6,7 @@ import pytest
 from checkflow.excel.layout import Layout
 
 def sent(admin, **f):
-    base = dict(method="check", customer="BOOK CO", sheet="MVC", amount="410.00", received="2026-11-20", payref="7101")
+    base = dict(method="check", deposit_bank="TNB", customer="BOOK CO", sheet="MVC", amount="410.00", received="2026-11-20", payref="7101")
     p = admin.post("/api/payments", json={"fields": base | f}).json()
     admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
     assert admin.post("/api/submit", json={"ids": [p["id"]]}).json()["written"] == 1
