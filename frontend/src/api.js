@@ -53,7 +53,13 @@ export const METHODS = { check: "Check", cash: "Cash", card: "Credit card", ach:
 
 // POST that returns a file (e.g. the ledger as .xlsx): saves it with the name the server suggests.
 export async function downloadPost(path, data, fallbackName) {
-  const r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data ?? {}) });
+  return saveResponse(await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data ?? {}) }), fallbackName);
+}
+// GET that returns a file (e.g. the Daily report).
+export async function downloadGet(path, fallbackName) {
+  return saveResponse(await fetch(path, { credentials: "same-origin" }), fallbackName);
+}
+async function saveResponse(r, fallbackName) {
   if (!r.ok) { let m = `Download failed (${r.status})`; try { m = (await r.json()).detail || m; } catch { /* empty */ } throw new Error(m); }
   const name = (r.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || fallbackName;
   const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click();

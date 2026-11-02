@@ -4,8 +4,9 @@ import { Paper, Stack, Typography, IconButton, TextField, Table, TableHead, Tabl
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DownloadIcon from "@mui/icons-material/Download";
+import SummarizeIcon from "@mui/icons-material/SummarizeOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import { money, num, fdate, taxParts, inDaily } from "../api";
+import { money, num, fdate, taxParts, inDaily, downloadGet } from "../api";
 import { SheetChip } from "./common";
 
 // The cashier's daily view: for one day received, what went into each deposit bank (cash / checks / card-ACH-wire)
@@ -44,6 +45,7 @@ export default function DayBankTotals({ rows, banks }) {
   const [day, setDay] = useState("");
   const [byPayee, setByPayee] = useState(false);
   const [open, setOpen] = useState(true);
+  const [report, setReport] = useState({ busy: false, error: "" });
   useEffect(() => { if (!day && days.length) setDay(days[0]); }, [days, day]);
   const { list, all, left } = useMemo(() => dayTotals(rows, day, banks, byPayee), [rows, day, banks, byPayee]);
   const i = days.indexOf(day);
@@ -57,6 +59,12 @@ export default function DayBankTotals({ rows, banks }) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([out.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n")], { type: "text/csv" }));
     a.download = `checkflow-bank-totals-${day}.csv`; a.click();
+  };
+
+  const dailyReport = async () => {
+    setReport({ busy: true, error: "" });
+    try { await downloadGet(`/api/reports/daily?day=${day}`, `Daily report ${day}.xlsx`); setReport({ busy: false, error: "" }); }
+    catch (e) { setReport({ busy: false, error: e.message }); }
   };
 
   return (
@@ -79,8 +87,13 @@ export default function DayBankTotals({ rows, banks }) {
             <ToggleButton value="bank">By bank</ToggleButton><ToggleButton value="payee">Bank and payee</ToggleButton>
           </ToggleButtonGroup>
           <Button size="small" startIcon={<DownloadIcon />} onClick={csv} disabled={!all.count}>CSV</Button>
+          <Tooltip title="Excel report like the DEPOSIT TAXES sheet: deposits by company and bank, taxes to withhold, week to date. Uses every payment in the ledger for this day, not just the filters below.">
+            <span><Button size="small" variant="outlined" startIcon={<SummarizeIcon />} onClick={dailyReport} disabled={!day || report.busy}>
+              {report.busy ? "Preparing…" : "Daily report"}</Button></span>
+          </Tooltip>
         </Stack>}
       </Stack>
+      {report.error && <Typography variant="body2" color="error" sx={{ mt: 1 }}>Daily report: {report.error}</Typography>}
       <Collapse in={open}>
         <Box sx={{ overflowX: "auto", mt: 1.5 }}>
           {!all.count ? <Typography color="text.secondary" sx={{ py: 2 }}>Nothing received on this day{rows.length ? " for the payees and methods selected below" : ""}.</Typography> :

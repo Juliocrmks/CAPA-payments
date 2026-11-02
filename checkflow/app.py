@@ -216,7 +216,7 @@ def reset_password(uid: int, r: PwReset, me_=Depends(require_admin)):
 
 # ================================================================== settings
 SETTING_KEYS = ["workbook", "ignore_sheets", "deposit_banks", "deposit_bank_check", "deposit_bank_cash", "deposit_bank_card",
-                "deposit_bank_ach", "deposit_bank_wire", "keep_sensitive_pages", "auth_mode", "ldap_server", "ldap_domain",
+                "deposit_bank_ach", "deposit_bank_wire", "keep_sensitive_pages", "sales_tax_rate", "auth_mode", "ldap_server", "ldap_domain",
                 "ldap_upn_suffix", "ldap_base_dn", "ldap_admin_group", "ldap_ar_group"]
 
 @app.get("/api/settings")
@@ -233,6 +233,10 @@ def save_settings(s: dict, me_=Depends(require_admin)):
             v = (v or "").strip().strip('"').strip("'")
             if v and not os.path.exists(v): raise HTTPException(400, "That workbook file doesn't exist. Check the path.")
             if v and not v.lower().endswith((".xlsx", ".xlsm")): raise HTTPException(400, "Choose an .xlsx or .xlsm workbook.")
+        if k == "sales_tax_rate":
+            try: v = f"{float(str(v).strip().rstrip('%')):g}"
+            except ValueError: raise HTTPException(400, "Sales tax must be a percent, e.g. 8.25.")
+            if not 0 <= float(v) < 100: raise HTTPException(400, "Sales tax must be a percent between 0 and 100.")
         if k == "auth_mode" and v not in ("local", "ldap"): raise HTTPException(400, "Sign-in must be local or ldap.")
         db.set_setting(k, v)
     db.audit(me_["username"], "settings_changed", keys=[k for k in s if k in SETTING_KEYS])
@@ -1049,6 +1053,21 @@ def ledger_export(r: ExportReq, user=Depends(require_perm("export"))):
     db.audit(user["username"], "ledger_exported", rows=len(rows))
     return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="checkflow-ledger-{datetime.date.today().isoformat()}.xlsx"'})
+
+@app.get("/api/reports/daily")
+def daily_report(day: str, user=Depends(require_perm("export"))):
+    """The Daily report for one day received: the DEPOSIT TAXES sheet rebuilt from the whole ledger (not just the rows
+    on screen), with formulas, plus the week's payments and invoice splits it reads from."""
+    from . import reports
+    try: d = datetime.date.fromisoformat(day)
+    except ValueError: raise HTTPException(400, "Pick a day (YYYY-MM-DD).")
+    try: rate = float(db.get_setting("sales_tax_rate") or 8.25) / 100
+    except ValueError: rate = reports.DEFAULT_RATE
+    banks = [b.strip() for b in (db.get_setting("deposit_banks") or "").split(",") if b.strip()]
+    data = reports.build(db.ledger_rows(), d, [s.upper() for s in sheets()], banks, in_daily_total, rate=rate, generated_by=_who(user))
+    db.audit(user["username"], "daily_report_downloaded", day=day)
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Daily report {day}.xlsx"'})
 
 def _sync_loop():
     import time
