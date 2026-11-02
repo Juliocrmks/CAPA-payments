@@ -19,7 +19,6 @@ DEFAULT_RATE = 0.0825
 ALIASES = {"LONE STAR": "LSB", "LONE STAR BANK": "LSB", "MID": "MIDFIRST", "MID FIRST": "MIDFIRST", "TEXAS NATIONAL": "TNB",
            "TEXAS NATIONAL BANK": "TNB"}
 PREFERRED = ["LSB", "TNB", "MIDFIRST", "BPS"]
-NOT_TAXED = {"BPS"}            # not in the taxes block, as on the DEPOSIT TAXES sheet
 BANK_TITLES = {"LSB": "LONE STAR BANK", "TNB": "TEXAS NATIONAL BANK"}
 METHODS = {"check": "Check", "cash": "Cash", "card": "Credit card", "ach": "ACH / e-check", "wire": "Wire transfer"}
 
@@ -61,7 +60,7 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     mon = day - dt.timedelta(days=day.weekday())
     week = [mon + dt.timedelta(k) for k in range((day - mon).days + 1)]
     groups = bank_groups(deposit_banks)
-    taxed = [g for g in groups if g not in NOT_TAXED]
+    taxed = groups                 # every deposit bank, BPS included, gets taxable income / withhold / TAXED
 
     pays = []
     for r in rows:
@@ -214,8 +213,6 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     R.cell(tB + 1, 2, f'=IF({U}<>0,"Taxable not set on "&TEXT({U},"$#,##0.00")&": counted as not taxable here until AR sets it.","Every payment has Taxable set.")').font = font(size=9, color="C00000")
     LO = f"{L(c_left)}{tA}"
     R.cell(tB + 2, 2, f'=IF({LO}<>0,"Left out of the daily total (Affects daily total off): "&TEXT({LO},"$#,##0.00")&". See Payments, In daily total = No.","")').font = font(size=9, color="777777")
-    if NOT_TAXED & set(groups):
-        R.cell(tB + 3, 2, f"{', '.join(sorted(NOT_TAXED & set(groups)))} deposits aren't in the taxes block, as on the DEPOSIT TAXES sheet.").font = font(size=9, color="777777")
 
     # Section C: week to date, tax to withhold
     w = tB + 6

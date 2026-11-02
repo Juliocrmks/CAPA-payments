@@ -51,7 +51,7 @@ def test_daily_report_from_the_ledger(admin):
     assert [rep.cell(9 + i, 2).value for i in range(4)] == ["MVC", "UVM", "RVP", "VCP"]
     assert rep["C9"].value.startswith("=SUMIFS(Payments!$F:$F") and 'Payments!$O:$O,"Yes"' in rep["C9"].value
     texts = [str(c.value) for row in rep.iter_rows() for c in row if c.value]
-    assert "WITHHOLD LSB" in texts and "WITHHOLD MIDFIRST" in texts and "WITHHOLD BPS" not in texts
+    assert {"WITHHOLD LSB", "WITHHOLD MIDFIRST", "WITHHOLD BPS", "BPS TAXABLE INCOME"} <= set(texts)            # BPS is taxed too
     assert "WEEK TO DATE: TAX TO WITHHOLD" in texts and any("/(1+$F$3)" in t for t in texts)
 
 def test_daily_report_rate_and_access(admin, client):
