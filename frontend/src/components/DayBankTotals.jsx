@@ -3,6 +3,7 @@ import { Paper, Stack, Typography, IconButton, TextField, Table, TableHead, Tabl
   ToggleButton, Button, Box, Tooltip, Collapse } from "@mui/material";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+// eslint-disable-next-line no-unused-vars -- for the hidden CSV button
 import DownloadIcon from "@mui/icons-material/Download";
 import SummarizeIcon from "@mui/icons-material/SummarizeOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -52,6 +53,7 @@ export default function DayBankTotals({ rows, banks }) {
   const older = i >= 0 ? days[i + 1] : days.find((d) => d < day);
   const newer = i > 0 ? days[i - 1] : i < 0 ? [...days].reverse().find((d) => d > day) : undefined;
 
+  // eslint-disable-next-line no-unused-vars -- the CSV button is hidden for now, see below
   const csv = () => {
     const head = ["Day", "Deposit bank", ...(byPayee ? ["Payee"] : []), ...COLS.map(([, l]) => l)];
     const line = (g, label) => [day, label ?? g.bank, ...(byPayee ? [g.sheet ?? ""] : []), g.count, ...COLS.slice(1).map(([k]) => g[k].toFixed(2))];
@@ -86,7 +88,8 @@ export default function DayBankTotals({ rows, banks }) {
           <ToggleButtonGroup size="small" exclusive value={byPayee ? "payee" : "bank"} onChange={(_, v) => v && setByPayee(v === "payee")}>
             <ToggleButton value="bank">By bank</ToggleButton><ToggleButton value="payee">Bank and payee</ToggleButton>
           </ToggleButtonGroup>
-          <Button size="small" startIcon={<DownloadIcon />} onClick={csv} disabled={!all.count}>CSV</Button>
+          {/* CSV download hidden for now (confused users); csv() above still works if it's wanted back:
+              <Button size="small" startIcon={<DownloadIcon />} onClick={csv} disabled={!all.count}>CSV</Button> */}
           <Tooltip title="Excel report like the DEPOSIT TAXES sheet: deposits by company and bank, taxes to withhold, week to date. Uses every payment in the ledger for this day, not just the filters below.">
             <span><Button size="small" variant="outlined" startIcon={<SummarizeIcon />} onClick={dailyReport} disabled={!day || report.busy}>
               {report.busy ? "Preparing…" : "Daily report"}</Button></span>
