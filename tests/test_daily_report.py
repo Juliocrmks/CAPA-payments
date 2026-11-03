@@ -89,18 +89,13 @@ def test_daily_report_rate_and_access(admin, client):
     assert ro.get("/api/reports/daily", params={"day": "2027-03-03"}).status_code == 200    # anyone who can export
     assert TestClient(client.app).get("/api/reports/daily", params={"day": "2027-03-03"}).status_code == 401
 
-def test_deposit_bank_required_except_refunds(admin):
-    base = dict(method="check", customer="NO BANK CO", sheet="MVC", received="2027-03-04", payref="9")
-    def try_send(**f):
-        p = admin.post("/api/payments", json={"fields": base | f}).json()
-        admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
-        return p["id"], admin.post("/api/submit", json={"ids": [p["id"]]}).json()
-    _, r = try_send(amount="500.00", deposit_bank="")
-    assert r["written"] == 0 and "deposit bank" in r["skipped"][0]["reason"]
-    pid, r = try_send(amount="-75.00", deposit_bank="")                  # a refund / returned check: no bank needed
-    assert r["written"] == 1
-    assert admin.patch(f"/api/ledger/{pid}", json={"amount": "-80.00"}).status_code == 200
-    pid, r = try_send(amount="500.00", deposit_bank="TNB")
-    assert r["written"] == 1
-    e = admin.patch(f"/api/ledger/{pid}", json={"deposit_bank": ""})
-    assert e.status_code == 400 and "deposit bank" in e.json()["detail"]
+def test_deposit_bank_can_be_set_later(admin):
+    """Checks are entered during the day; the deposit bank is often only known at the end of it."""
+    p = admin.post("/api/payments", json={"fields": dict(method="check", customer="LATER BANK CO", sheet="MVC", amount="500.00",
+                                                          received="2027-03-08", payref="9", taxable="Yes")}).json()
+    admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
+    assert admin.post("/api/submit", json={"ids": [p["id"]]}).json()["written"] == 1      # sent without a bank
+    wb = openpyxl.load_workbook(io.BytesIO(admin.get("/api/reports/daily", params={"day": "2027-03-08"}).content))
+    assert any("have no deposit bank yet" in str(c.value) for row in wb["Daily report"].iter_rows() for c in row)
+    assert admin.patch(f"/api/ledger/{p['id']}", json={"deposit_bank": "tnb"}).json()["ok"]  # set at the end of the day
+    assert admin.patch(f"/api/ledger/{p['id']}", json={"deposit_bank": ""}).status_code == 200

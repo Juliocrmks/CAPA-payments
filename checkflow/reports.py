@@ -233,7 +233,7 @@ def build(rows, day, companies, deposit_banks, in_daily, rate=DEFAULT_RATE, gene
     LO = f"{L(c_left)}{tA}"
     R.cell(tB + 2, 2, f'=IF({LO}<>0,"Left out of the daily total (Affects daily total off): "&TEXT({LO},"$#,##0.00")&". See Payments, In daily total = No.","")').font = font(size=9, color="777777")
     nb = f'COUNTIFS({PR}$A:$A,$C$3,{PR}$O:$O,"Yes",{PR}$H:$H,"NO BANK",{PR}$F:$F,">0")'
-    R.cell(tB + 3, 2, f'=IF({nb}>0,{nb}&" payment(s) have no deposit bank, so their taxable income is not in the taxes above. Only refund and returned checks go without a bank.","")').font = font(size=9, color="C00000")
+    R.cell(tB + 3, 2, f'=IF({nb}>0,{nb}&" payment(s) have no deposit bank yet, so they are under Other / no bank and not in the taxes above. Set the bank in the ledger and download the report again.","")').font = font(size=9, color="C00000")
     notes = [f"{g} taxes include {', '.join(folded[g])} deposits." for g in taxed if folded[g]]
     notes += [f"{', '.join(sorted(NON_TAXABLE & set(cos)))} is non-taxable income: all of it counts as not taxable."] if NON_TAXABLE & set(cos) else []
     for i, t in enumerate(notes): R.cell(tB + 4 + i, 2, t).font = font(size=9, color="777777")

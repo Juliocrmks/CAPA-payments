@@ -730,12 +730,6 @@ class Submit(BaseModel):
 
 REQUIRED = {"customer": "customer", "sheet": "payee sheet", "amount": "amount", "received": "date received", "method": "payment method"}
 
-def needs_bank(f):
-    """Every payment is deposited somewhere; only refund and returned checks (negative amounts) go without a bank."""
-    try: amt = float(str(f.get("amount") or 0).replace(",", "").replace("$", "") or 0)
-    except ValueError: amt = 0
-    return amt > 0 and not (f.get("deposit_bank") or "").strip()
-
 @app.post("/api/submit")
 def submit(s: Submit, user=Depends(require_admin)):
     items, skipped, rows = [], [], {p["id"]: p for p in db.list_payments(["validated"])}
@@ -744,7 +738,7 @@ def submit(s: Submit, user=Depends(require_admin)):
         p = rows.get(pid)
         if not p: skipped.append(dict(id=pid, reason="Not validated.")); continue
         f = p["fields"]
-        missing = [label for k, label in REQUIRED.items() if not f.get(k)] + (["deposit bank"] if needs_bank(f) else [])
+        missing = [label for k, label in REQUIRED.items() if not f.get(k)]     # deposit bank: optional, often set at the end of the day
         if missing: skipped.append(dict(id=pid, reason="Missing " + ", ".join(missing) + ".")); continue
         target = book_sheet(f["sheet"], valid, payees)
         if not target: skipped.append(dict(id=pid, reason=f"Sheet '{f['sheet']}' is not in the workbook.")); continue
@@ -877,10 +871,7 @@ def _clean_edit(before, body, user):
     if "customer" in new:
         new["customer"] = " ".join(new["customer"].upper().split())
         if not new["customer"]: raise HTTPException(400, "Customer can't be empty.")
-    if "deposit_bank" in new:
-        new["deposit_bank"] = new["deposit_bank"].upper()
-        if needs_bank({"amount": new.get("amount", old.get("amount")), "deposit_bank": new["deposit_bank"]}):
-            raise HTTPException(400, "Choose the deposit bank. Only refund and returned checks (negative amounts) go without one.")
+    if "deposit_bank" in new: new["deposit_bank"] = new["deposit_bank"].upper()
     if "sheet" in new:
         if not new["sheet"]: raise HTTPException(400, "Choose the payee sheet.")
         if (before.get("excel") or {}).get("row") and new["sheet"] not in sheets(): raise HTTPException(400, f"Sheet '{new['sheet']}' is not in the workbook.")

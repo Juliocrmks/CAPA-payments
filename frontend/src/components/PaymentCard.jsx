@@ -7,7 +7,7 @@ import ScheduleIcon from "@mui/icons-material/Schedule";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
-import { api, METHODS, inDaily, num } from "../api";
+import { api, METHODS, inDaily } from "../api";
 import { brand, warnBg } from "../theme";
 import { Thumbs, Lightbox, SheetChip, kindLabel } from "./common";
 
@@ -109,9 +109,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
             </TextField>
             <Autocomplete freeSolo options={meta.deposit_banks || []} value={f.deposit_bank || ""}
               onInputChange={(_, v, reason) => reason !== "reset" && set("deposit_bank", (v || "").toUpperCase())}
-              renderInput={(params) => <TextField {...params} label="Deposit bank"
-                helperText={num(f.amount) > 0 && !f.deposit_bank ? "Required (only refund and returned checks go without)" : " "}
-                FormHelperTextProps={{ sx: { color: num(f.amount) > 0 && !f.deposit_bank ? "#8a5300" : undefined } }} />} />
+              renderInput={(params) => <TextField {...params} label="Deposit bank" helperText="Can be set later, in the ledger" />} />
             <Box>
               <FormControlLabel sx={{ m: 0 }} label="Affects daily total"
                 control={<Checkbox size="small" checked={inDaily(f)} onChange={(e) => set("daily_total", e.target.checked ? "Yes" : "No", true)} />} />
