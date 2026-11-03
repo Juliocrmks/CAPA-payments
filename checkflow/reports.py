@@ -22,7 +22,7 @@ PREFERRED = ["LSB", "LSBPAY", "TNB", "MIDFIRST", "REGIONS", "BPS", "PETTY CASH"]
 # Deposit column -> the bank whose taxes it counts toward (business decision, Nov 2 2026): LSBPAY, PETTY CASH and BPS
 # deposits are Lone Star Bank for taxes. MIDFIRST and REGIONS are different banks, each taxed on its own.
 TAX_BANK = {"LSBPAY": "LSB", "PETTY CASH": "LSB", "BPS": "LSB"}
-NON_TAXABLE = {"VCP"}           # companies whose income is never taxable, whatever Taxable says
+from .config import NON_TAXABLE_SHEETS as NON_TAXABLE     # companies whose income is never taxable (VCP)
 BANK_TITLES = {"LSB": "LONE STAR BANK", "TNB": "TEXAS NATIONAL BANK"}
 METHODS = {"check": "Check", "cash": "Cash", "card": "Credit card", "ach": "ACH / e-check", "wire": "Wire transfer"}
 

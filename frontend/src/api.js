@@ -31,8 +31,12 @@ export const money = (v) => {
   return Number.isFinite(n) ? n.toLocaleString("en-US", { style: "currency", currency: "USD" }) : "—";
 };
 // Taxable, not taxable and not-set parts of one payment. A payment split by invoice is 'Partial' with taxable_amount.
+// VCP is non-taxable income: never taxable, whatever Taxable says.
+export const NON_TAXABLE_SHEETS = ["VCP"];
+export const nonTaxable = (f) => NON_TAXABLE_SHEETS.includes(String(f.sheet || "").trim().toUpperCase());
 export const taxParts = (f) => {
   const a = num(f.amount);
+  if (nonTaxable(f)) return { tax: 0, non: a, unset: 0 };
   if (f.taxable === "Partial") { const t = num(f.taxable_amount); return { tax: t, non: a - t, unset: 0 }; }
   return f.taxable === "Yes" ? { tax: a, non: 0, unset: 0 } : f.taxable === "No" ? { tax: 0, non: a, unset: 0 } : { tax: 0, non: 0, unset: a };
 };

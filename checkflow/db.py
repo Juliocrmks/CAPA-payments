@@ -1,6 +1,13 @@
 """SQLite storage: users, documents/pages, payments, ledger submissions, learned data, audit log."""
 import sqlite3, json, os, re, hashlib, datetime, threading
-from .config import DB_PATH, SEED_PAYEES, SEED_BANKS, DEFAULT_SETTINGS
+from .config import DB_PATH, SEED_PAYEES, SEED_BANKS, DEFAULT_SETTINGS, NON_TAXABLE_SHEETS
+
+def non_taxable(f): return (f.get("sheet") or "").strip().upper() in NON_TAXABLE_SHEETS
+
+def _no_tax(f):
+    """A payment for a non-taxable payee sheet (VCP) is Taxable = No, never Yes or split."""
+    if non_taxable(f): f.update(taxable="No", taxable_amount="", invoices=[])
+    return f
 from .registry import StaticRegistry, nkey
 
 SCHEMA_VERSION = 2
@@ -263,7 +270,7 @@ def page_file(page_id):
     return dict(r) if r else None
 
 def add_payment(doc_id, fields, warns, sources, page_ids, status="review", imported=False):
-    f = blank_fields() | {k: ("" if v is None else str(v)) for k, v in fields.items() if k in KEYS}
+    f = _no_tax(blank_fields() | {k: ("" if v is None else str(v)) for k, v in fields.items() if k in KEYS})
     with _lock, conn() as c:
         cur = c.execute("""INSERT INTO payments(document_id, status, fields, warns, sources, dedupe, imported, created_at, updated_at)
                            VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -308,6 +315,7 @@ def update_payment(pid, fields=None, status=None):
                 m = registry().match_payee(f["payee"])
                 if m: f["sheet"] = m[1]
             if "check_no" in fields and f["method"] == "check" and "payref" not in fields: f["payref"] = f["check_no"]
+            _no_tax(f)
             if "amount" in fields:
                 try: f["amount"] = f"{float(f['amount'].replace(',', '').replace('$', '')):.2f}"
                 except ValueError: w["amount"] = "Not a number."

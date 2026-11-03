@@ -50,7 +50,7 @@ def test_daily_report_from_the_ledger(admin):
     assert (D[5], D[14]) == (-250, "No") and E[7] == "MIDFIRST"
     G, H, I, J = (mine[f"{x} {tag}"] for x in "GHIJ")
     assert (G[7], G[18], H[7], H[18], J[7], J[18], A[18]) == ("BPS", "LSB", "PETTY CASH", "LSB", "REGIONS", "REGIONS", "LSB")
-    assert (I[1], I[8], I[9], I[10], I[11]) == ("VCP", "Yes", 0, "=F" + str(next(x for x in range(2, pay.max_row) if pay.cell(x, 3).value == f"I {tag}")), 0)
+    assert (I[1], I[8], I[9], I[10], I[11]) == ("VCP", "No", 0, "=F" + str(next(x for x in range(2, pay.max_row) if pay.cell(x, 3).value == f"I {tag}")), 0)
     spl = wb["Invoice splits"]
     assert [spl.cell(x, 5).value for x in range(2, spl.max_row + 1) if spl.cell(x, 3).value == f"C {tag}"] == ["INV-1", "INV-2"]
 
@@ -104,3 +104,25 @@ def test_deposit_bank_required_except_refunds(admin):
     assert r["written"] == 1
     e = admin.patch(f"/api/ledger/{pid}", json={"deposit_bank": ""})
     assert e.status_code == 400 and "deposit bank" in e.json()["detail"]
+
+def test_vcp_is_never_taxable(admin):
+    base = dict(method="check", customer="VCP CO", sheet="VCP", amount="800.00", received="2027-03-05", deposit_bank="TNB", payref="3")
+    p = admin.post("/api/payments", json={"fields": base}).json()
+    assert p["fields"]["taxable"] == "No"                                        # new VCP payments default to No
+    r = admin.patch(f"/api/payments/{p['id']}", json={"fields": {"taxable": "Yes"}})
+    assert r.status_code == 400 and "non-taxable" in r.json()["detail"]
+    other = admin.post("/api/payments", json={"fields": base | {"sheet": "MVC"}}).json()
+    assert other["fields"]["taxable"] == ""                                      # other sheets still start Not set
+    assert admin.patch(f"/api/payments/{other['id']}", json={"fields": {"sheet": "VCP"}}).json()["fields"]["taxable"] == "No"
+    admin.patch(f"/api/payments/{p['id']}", json={"status": "validated"})
+    assert admin.post("/api/submit", json={"ids": [p["id"]]}).json()["written"] == 1
+    assert admin.patch(f"/api/ledger/{p['id']}", json={"taxable": "Yes"}).status_code == 400
+    assert admin.post(f"/api/ledger/{p['id']}/invoices", json={"lines": [dict(invoice="I-1", amount="800", taxable="Yes")]}).status_code == 400
+    # a ledger payment moved to VCP becomes Taxable = No
+    m = admin.post("/api/payments", json={"fields": base | {"sheet": "MVC", "taxable": "Yes", "customer": "MOVE CO"}}).json()
+    admin.patch(f"/api/payments/{m['id']}", json={"status": "validated"}); admin.post("/api/submit", json={"ids": [m["id"]]})
+    assert admin.patch(f"/api/ledger/{m['id']}", json={"sheet": "VCP"}).status_code == 200
+    f = next(x for x in admin.get("/api/ledger").json()["rows"] if x["id"] == m["id"])["fields"]
+    assert f["taxable"] == "No"
+    from checkflow.app import tax_parts
+    assert tax_parts({"sheet": "VCP", "amount": "50", "taxable": "Yes"}) == (0.0, 50.0, 0.0)  # old rows marked Yes
