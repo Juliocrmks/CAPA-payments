@@ -7,7 +7,7 @@ import ScheduleIcon from "@mui/icons-material/Schedule";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
-import { api, METHODS, inDaily, num, nonTaxable } from "../api";
+import { api, METHODS, inDaily, num } from "../api";
 import { brand, warnBg } from "../theme";
 import { Thumbs, Lightbox, SheetChip, kindLabel } from "./common";
 
@@ -37,7 +37,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
   useEffect(() => { setF(p.fields); setWarns(p.warns); }, [p.id]);  // local edits win; the server copy only seeds the form
 
   const save = async (patch) => {
-    try { const r = await api.patch(`/api/payments/${p.id}`, { fields: patch }); setWarns(r.warns); setF((x) => ({ ...x, ...pick(r.fields, ["sheet", "bank", "payref", "taxable"].filter((k) => !(k in patch))) })); /* never overwrite what's being typed */ onChange(r, true); }
+    try { const r = await api.patch(`/api/payments/${p.id}`, { fields: patch }); setWarns(r.warns); setF((x) => ({ ...x, ...pick(r.fields, ["sheet", "bank", "payref"].filter((k) => !(k in patch))) })); /* never overwrite what's being typed */ onChange(r, true); }
     catch (e) { setWarns((w) => ({ ...w, [Object.keys(patch)[0]]: e.message })); }
   };
   const set = (k, v, now) => {
@@ -104,8 +104,7 @@ function PaymentCard({ p, meta, onChange, onRemove, onMovePage }) {
             {tf("ticket", "Ticket ref (receipt #)")}
             {tf("payref", f.method === "check" ? "Payment ref (check #)" : f.method === "wire" ? "Payment ref (blank = date)" : "Payment ref")}
             {tf("order", "Order # (quote)")}
-            <TextField select label="Taxable" value={nonTaxable(f) ? "No" : f.taxable || ""} onChange={(e) => set("taxable", e.target.value, true)}
-              disabled={nonTaxable(f)} helperText={nonTaxable(f) ? "VCP is never taxed" : " "}>
+            <TextField select label="Taxable" value={f.taxable || ""} onChange={(e) => set("taxable", e.target.value, true)} helperText=" ">
               <MenuItem value="">Not set</MenuItem><MenuItem value="Yes">Yes</MenuItem><MenuItem value="No">No</MenuItem>
             </TextField>
             <Autocomplete freeSolo options={meta.deposit_banks || []} value={f.deposit_bank || ""}

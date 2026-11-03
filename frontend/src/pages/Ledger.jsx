@@ -17,7 +17,7 @@ import AttachFileIcon from "@mui/icons-material/AttachFile";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import ImportExcelDialog from "../components/ImportExcelDialog";
 import DayBankTotals from "../components/DayBankTotals";
-import { api, money, num, fdate, METHODS, todayIso, downloadPost, taxParts, inDaily, nonTaxable } from "../api";
+import { api, money, num, fdate, METHODS, todayIso, downloadPost, taxParts, inDaily } from "../api";
 import { brand, warnBg } from "../theme";
 import { SheetChip, MethodChip, Thumbs, Lightbox, Stat, Triangles, useToast } from "../components/common";
 
@@ -359,8 +359,6 @@ const taxText = (f) => f.taxable === "Partial" ? `Partial · ${money(f.taxable_a
 function TaxSelect({ r, onEdit, onSplit }) {
   const f = r.fields;
   const v = f.taxable || "";
-  if (nonTaxable({ ...f, sheet: r.sheet || f.sheet }))
-    return <Tooltip title="VCP is non-taxable income: always Taxable = No"><Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>No · VCP</Typography></Tooltip>;
   return (
     <Select size="small" value={v} displayEmpty onClick={(e) => e.stopPropagation()}
       onChange={(e) => { if (e.target.value === "__split") onSplit?.(r); else onEdit(r, "taxable", e.target.value); }}

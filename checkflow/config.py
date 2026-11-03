@@ -39,7 +39,6 @@ SEED_PAYEES = [
     ("Upper Valley Materials", "UVM", ["UVM", "UPPER", "UPPER VALLEY"]),
     ("Valley Concrete Pumps", "VCP", ["VCP", "VALLEY CONCRETE PUMP"]),
 ]
-NON_TAXABLE_SHEETS = {"VCP"}      # payee sheets whose income is never taxed (business decision, Nov 2026)
 SEED_BANKS = {"114915447": "Rio Bank", "114917623": "IBC Bank"}
 DEFAULT_SETTINGS = {
     "ignore_sheets": "Sheet1, Sheet2, FORMAT, DEPOSIT TAXES",

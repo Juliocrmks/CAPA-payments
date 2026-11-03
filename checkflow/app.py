@@ -699,14 +699,9 @@ class Patch(BaseModel):
     fields: dict | None = None
     status: str | None = None
 
-NO_TAX_MSG = "VCP is non-taxable income: its payments are always Taxable = No."
-
 @app.patch("/api/payments/{pid}")
 def patch_payment(pid: int, p: Patch, user=Depends(require_admin)):
     if p.status and p.status not in ("review", "validated", "pending"): raise HTTPException(400, "Bad status")
-    if p.fields and p.fields.get("taxable") in ("Yes", "Partial"):
-        cur = db.get_payment(pid)
-        if cur and db.non_taxable({"sheet": p.fields.get("sheet", cur["fields"].get("sheet"))}): raise HTTPException(400, NO_TAX_MSG)
     try: r = db.update_payment(pid, p.fields, p.status)
     except ValueError as e: raise HTTPException(409, str(e))
     if not r: raise HTTPException(404)
@@ -899,9 +894,6 @@ def ledger_patch(pid: int, body: dict, user=Depends(require_user)):
     ch = _clean_edit(before, body, user)
     if "taxable" in body and before["fields"].get("invoices"):     # a plain Yes / No / blank replaces an invoice split
         ch.update(taxable=body["taxable"] or "", invoices=[], taxable_amount="")
-    if db.non_taxable({"sheet": ch.get("sheet", before["fields"].get("sheet"))}):    # VCP: always Taxable = No
-        if ch.get("taxable") in ("Yes", "Partial"): raise HTTPException(400, NO_TAX_MSG)
-        if "sheet" in ch and before["fields"].get("taxable") != "No": ch.update(taxable="No", invoices=[], taxable_amount="")
     if not ch: return dict(ok=True, changed=[], excel="unchanged", message="")
     if "taxable" in ch: ch.update(taxable_by=_who(user), taxable_at=_now())   # who set Taxable / Posted (and when) shows in the ledger
     if "posted" in ch: ch.update(posted_by=_who(user), posted_at=_now())
@@ -936,10 +928,9 @@ class InvoiceSplit(BaseModel):
     lines: list[InvoiceLine] = []
 
 def tax_parts(f):
-    """-> (taxable, not taxable, not set) amounts of one payment. VCP (non-taxable sheets) is never taxable."""
+    """-> (taxable, not taxable, not set) amounts of one payment."""
     try: a = float(str(f.get("amount") or 0).replace(",", "") or 0)
     except ValueError: a = 0.0
-    if db.non_taxable(f): return 0.0, a, 0.0
     t = f.get("taxable") or ""
     if t == "Partial":
         try: x = float(f.get("taxable_amount") or 0)
@@ -952,7 +943,6 @@ def ledger_invoices(pid: int, s: InvoiceSplit, user=Depends(require_perm("taxabl
     before = db.get_payment(pid)
     if not before or before["status"] != "submitted": raise HTTPException(404, "Payment not found in the ledger.")
     f = before["fields"]
-    if db.non_taxable(f) and s.lines: raise HTTPException(400, NO_TAX_MSG)
     lines = []
     for k, ln in enumerate(s.lines, 1):
         inv = " ".join(ln.invoice.split()).upper()[:40]
