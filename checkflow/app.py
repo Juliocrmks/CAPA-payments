@@ -216,7 +216,7 @@ def reset_password(uid: int, r: PwReset, me_=Depends(require_admin)):
 
 # ================================================================== settings
 SETTING_KEYS = ["workbook", "ignore_sheets", "deposit_banks", "deposit_bank_check", "deposit_bank_cash", "deposit_bank_card",
-                "deposit_bank_ach", "deposit_bank_wire", "keep_sensitive_pages", "sales_tax_rate", "auth_mode", "ldap_server", "ldap_domain",
+                "deposit_bank_ach", "deposit_bank_wire", "sales_tax_rate", "auth_mode", "ldap_server", "ldap_domain",
                 "ldap_upn_suffix", "ldap_base_dn", "ldap_admin_group", "ldap_ar_group"]
 
 @app.get("/api/settings")
@@ -494,15 +494,11 @@ def _worker():
             def prog(k, n): db.update_document(doc_id, progress=round(0.05 + 0.9 * k / max(n, 1), 3), pages=n)
             data = open(path, "rb").read()
             res = extract.process(data, filename, reg, received or None, progress=prog)
-            keep_sensitive = db.get_setting("keep_sensitive_pages") == "1"
             page_ids = {}
-            for pg in res["pages"]:
-                img = pg["image"]
-                if pg["sensitive"] and not keep_sensitive:       # ID / card photos: keep only an unreadable placeholder
-                    img = cv2.resize(cv2.resize(img, (24, 32)), (img.shape[1] // 4, img.shape[0] // 4), interpolation=cv2.INTER_NEAREST)
+            for pg in res["pages"]:                              # every page is kept as scanned, readable by anyone who can view images
                 name = f"{uuid.uuid4().hex}.jpg"
-                with open(os.path.join(config.IMAGES, name), "wb") as fh: fh.write(extract.jpeg(img))
-                page_ids[pg["index"]] = db.add_page(doc_id, pg["index"], pg["kind"], name, pg["sensitive"])
+                with open(os.path.join(config.IMAGES, name), "wb") as fh: fh.write(extract.jpeg(pg["image"]))
+                page_ids[pg["index"]] = db.add_page(doc_id, pg["index"], pg["kind"], name, False)
             for p in res["payments"]:
                 f = dict(p["fields"])
                 if sheet_hint and not f.get("sheet"):
@@ -555,7 +551,6 @@ def _file_stem(f):
 def page_image(page_id: int, download: int = 0, user=Depends(require_perm("images.view"))):
     p = db.page_file(page_id)
     if not p: raise HTTPException(404)
-    if p["sensitive"] and user["role"] != "admin": raise HTTPException(403)
     if download and not can(user, "images.download"): raise HTTPException(403, "Your account can view images but not download them.")
     path = os.path.join(config.IMAGES, p["image"])
     if not os.path.exists(path): raise HTTPException(404)
@@ -596,7 +591,6 @@ def page_thumb(page_id: int, w: int = 480, user=Depends(require_perm("images.vie
     """A trimmed, smaller copy of a page for lists (cached next to the images)."""
     p = db.page_file(page_id)
     if not p: raise HTTPException(404)
-    if p["sensitive"] and user["role"] != "admin": raise HTTPException(403)
     w = 480 if w > 240 else 240
     src = os.path.join(config.IMAGES, p["image"])
     if not os.path.exists(src): raise HTTPException(404)
@@ -618,7 +612,7 @@ def payment_pdf(pid: int, user=Depends(require_perm("images.download"))):
     from PIL import Image
     pay = db.get_payment(pid)
     if not pay: raise HTTPException(404)
-    pages = [p for p in db.payment_pages(pid) if user["role"] == "admin" or not p["sensitive"]]
+    pages = db.payment_pages(pid)
     imgs = []
     for p in pages:
         fp = os.path.join(config.IMAGES, p["image"])
@@ -783,8 +777,6 @@ def _relocate(days, path=None):
 @app.get("/api/ledger")
 def ledger(user=Depends(require_perm("ledger.view"))):
     rows = db.ledger_rows()
-    if user["role"] != "admin":
-        for r in rows: r["pages"] = [p for p in r["pages"] if not p["sensitive"]]
     return dict(rows=rows, sheets=sheets(), deposit_banks=[b.strip() for b in (db.get_setting("deposit_banks") or "").split(",") if b.strip()])
 
 # Ledger edits: AR may set Taxable; admins may correct any field of a payment already sent to Excel.

@@ -7,7 +7,6 @@ Document kinds seen in real packets:
   receipt       CAPA receipt slip, red receipt number = TICKET REF  (handwritten amount/name: hints only)
   bankpost      bank screen 'ACH Entry ... Posted Today' / wire    -> wire
   email         e-mail header page for a confirmation              (support)
-  sensitive     driver licence / card photos                       (support, image not kept by default)
   support       statements, quotes, bill-payment advices, blank pages
 """
 import re
@@ -148,8 +147,6 @@ def parse_bankpost(items, reg):
         else: W["customer"] = "Bank posting doesn't name the sender. Type the customer."
     return F, W
 
-SENSITIVE = re.compile(r"DRIVER|LICEN[CS]E|\bDOB\b|DATE OF BIRTH|\bCLASS\s*:|HAZMAT|ROADSIDE|VALID\s*THRU|MEMBER\s*SINCE|\bEXP\s*\d{2}/\d{2}|AMERICAN\s*EXPRESS|EXPRES+\b")
-
 def classify(items):
     if len(items) < 2: return "blank"
     raw = text_of(items).upper()
@@ -158,7 +155,6 @@ def classify(items):
     if "YOUJUSTGOTPAID" in t or ("PAYMENTMETHOD" in t and ("REFERENCE" in t or "RETREF" in t)): return "confirmation"
     if ("TOTALPAID" in t or "RETREF" in t) and "TRANSACTPRO" in t or ("TOTALPAID" in t and "RETREF" in t): return "confirmation_cont"
     if re.search(r"ACHENTRY|ENTRYMEMO|POSTEDTODAY|WIRETRANSFER|INCOMINGWIRE|VENDORPAY", t) and money_items(items): return "bankpost"
-    if SENSITIVE.search(raw) and "PAYMENTMETHOD" not in t: return "sensitive"
     if "PAYMENTCONFIRMATION" in t and "FROM" in t: return "email"
     return "other"
 

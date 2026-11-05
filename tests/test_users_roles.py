@@ -120,3 +120,21 @@ def test_posted_to_netsuite_and_who_did_it(admin, client):
     ws = openpyxl.load_workbook(io.BytesIO(admin.post("/api/ledger/export", json={"ids": [pid]}).content))["Ledger"]
     head = [c.value for c in ws[1]]; row = {h: c.value for h, c in zip(head, ws[2])}
     assert row["NetSuite #"] == "NS-50001" and row["Posted by"] == "Michelle Test" and row["Taxable set by"] == "Michelle Test"
+
+def test_no_page_is_locked(admin, client):
+    """Pages used to be locked as ID / card photos; now every page shows to anyone who can view images (Nov 2026)."""
+    import os, uuid as _u
+    from fastapi.testclient import TestClient
+    from checkflow import db, config
+    import cv2, numpy as np
+    name = f"{_u.uuid4().hex}.jpg"; cv2.imwrite(os.path.join(config.IMAGES, name), np.full((40, 30, 3), 255, np.uint8))
+    doc = db.add_document("locked.pdf", "2026-11-02", "admin")
+    pid = db.add_page(doc, 0, "sensitive", name, True)                     # marked before the change
+    email = f"ro.{_u.uuid4().hex[:5]}@example.com"
+    admin.post("/api/users", json={"email": email, "role": "readonly", "password": "pw"})
+    ro = TestClient(client.app); ro.post("/api/login", json={"username": email, "password": "pw"})
+    assert ro.get(f"/api/pages/{pid}").status_code == 200 and ro.get(f"/api/pages/{pid}/thumb").status_code == 200
+    db.init()                                                               # on the next start the old mark is cleared
+    p = db.page_file(pid)
+    assert not p["sensitive"]
+    with db.conn() as c: assert c.execute("SELECT kind FROM pages WHERE id=?", (pid,)).fetchone()["kind"] == "support"

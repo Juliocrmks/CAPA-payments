@@ -6,7 +6,6 @@ import FitScreenIcon from "@mui/icons-material/FitScreen";
 import RotateRightIcon from "@mui/icons-material/RotateRight";
 import SearchIcon from "@mui/icons-material/Search";
 import OpenInFullIcon from "@mui/icons-material/OpenInFull";
-import LockIcon from "@mui/icons-material/Lock";
 import { kindLabel } from "./common";
 
 const LENS = 190;       // magnifier diameter (px)
@@ -62,9 +61,7 @@ export default function DocViewer({ pages, height = 560, onFullscreen }) {
         onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom((z) => Math.min(4, Math.max(1, z - Math.sign(e.deltaY) * 0.25))); } }}
         sx={{ position: "relative", height, overflow: zoom > 1 ? "auto" : "hidden", bgcolor: "#2A1A10", borderRadius: 1.5,
           cursor: lensOn ? "none" : zoom > 1 ? (drag.current ? "grabbing" : "grab") : "default", userSelect: "none" }}>
-        {p.sensitive ? (
-          <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ height: "100%", color: "#fff" }}><LockIcon /><Typography variant="body2">ID or card photo, hidden to protect personal data.</Typography></Stack>
-        ) : (
+        {(
           <Box sx={{ minHeight: "100%", display: "flex", alignItems: zoom > 1 ? "flex-start" : "center", justifyContent: zoom > 1 ? "flex-start" : "center", p: 1 }}>
             <img ref={img} src={p.image} alt={kindLabel(p.kind)} draggable={false}
               style={{ display: "block", background: "#fff", borderRadius: 4, transform: `rotate(${rot}deg)`, transition: "transform .15s",

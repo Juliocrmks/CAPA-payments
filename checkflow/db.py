@@ -85,6 +85,8 @@ def init():
             have += [b for b in ("LSB", "LSBPAY", "TNB", "MID", "REGIONS", "BPS", "PETTY CASH") if b not in up]
             c.execute("INSERT OR REPLACE INTO settings VALUES('deposit_banks', ?)", (", ".join(have),))
             c.execute("INSERT OR REPLACE INTO meta VALUES('deposit_banks_v2', '1')")
+        # pages are no longer locked as ID / card photos (Nov 2026): unlock any marked before, as supporting pages
+        c.execute("UPDATE pages SET sensitive=0, kind=CASE WHEN kind='sensitive' THEN 'support' ELSE kind END WHERE sensitive<>0 OR kind='sensitive'")
 
 TIME_COLS = [("users", "created_at"), ("users", "last_login"), ("documents", "created_at"), ("payments", "created_at"),
              ("payments", "updated_at"), ("payments", "submitted_at"), ("payments", "deleted_at"), ("submissions", "written_at"),

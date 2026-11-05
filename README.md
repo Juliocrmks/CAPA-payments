@@ -32,7 +32,7 @@ A live demo on AWS EC2 is one `terraform apply` away: see [deploy/terraform](dep
    | CAPA receipt slip | Its red number becomes the **Ticket ref** of the payment it documents; a slip with nothing else is **Cash** |
    | Bank posting ("… ACH Entry … Posted Today") | **Wire transfer** |
    | Day-sheet printout, statements, quotes | skipped / attached as supporting pages |
-   | Driver licence, card photos | attached, stored blurred (Settings can keep them readable) |
+   | Driver licence, card photos | attached as supporting pages, kept as scanned |
 
    The received date comes from the file name (`MVC OCT_09-26.pdf` → Oct 9 2026), the sheet from the file name
    prefix or what's printed. Review each card (uncertain fields are amber), **Validate**, or set **Pending** for later.

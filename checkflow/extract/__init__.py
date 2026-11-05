@@ -1,7 +1,7 @@
 """Turn an uploaded file (photo or multi-page scanned PDF) into payment records ready for review.
 
 process(data, filename, reg) -> {"pages": [page...], "payments": [payment...]}
-  page    = {index, kind, image(np), sensitive}
+  page    = {index, kind, image(np)}
   payment = {fields, warns, pages: [page index...], primary: page index, sources: [kinds]}
 """
 from .ocr import load_pages, orient, rotate, ocr, cy_, jpeg, engine  # noqa: F401  (re-exported)
@@ -18,7 +18,7 @@ def analyze_page(img, reg, received, batch_routings=(), partial=False):
     H = img.shape[0]
     kind = classify(items)
     recs = []
-    if kind in ("sheet", "blank", "sensitive", "email"):
+    if kind in ("sheet", "blank", "email"):
         return img, kind, recs, items
     if kind == "confirmation_cont":       # 2nd page of a TransactPro e-mail: carries 'Total Paid' (amount incl. fees)
         tp = parse_total_paid(items)
@@ -98,7 +98,7 @@ def group(records, pages):
                      customer="Handwritten name. Type the customer.")
             pays.append(dict(fields=F, warns=W, pages=list(rec["pages"]), primary=rec["page"], sources=["receipt"]))
     pays.sort(key=lambda p: p["primary"])
-    # support / e-mail / sensitive pages: attach to the payment printed right before them (e-mail headers: right after)
+    # support / e-mail pages: attach to the payment printed right before them (e-mail headers: right after)
     for pg in pages:
         if pg["kind"] in ("sheet", "blank") or any(pg["index"] in p["pages"] for p in pays): continue
         target = None
@@ -120,7 +120,7 @@ def process(data, filename, reg, received=None, progress=None):
     for k, img in enumerate(imgs):
         if progress: progress(k, len(imgs))
         up, kind, recs, items = analyze_page(img, reg, received)
-        pages.append(dict(index=k, kind=kind, image=up, sensitive=kind == "sensitive"))
+        pages.append(dict(index=k, kind=kind, image=up))
         for r in recs: records.append(dict(r, page=k))
         if kind == "check?": retry.append(k)
     seen = {r["fields"]["routing"] for r in records if r["fields"].get("routing")}

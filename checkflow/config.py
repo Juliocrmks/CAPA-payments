@@ -49,7 +49,6 @@ DEFAULT_SETTINGS = {
     "deposit_bank_wire": "",
     "deposit_banks": "LSB, LSBPAY, TNB, MID, REGIONS, BPS, PETTY CASH",
     "sales_tax_rate": "8.25",        # % included in taxable deposits (Daily report)
-    "keep_sensitive_pages": "0",
     "auth_mode": "local",            # local | ldap (ldap always falls back to local accounts)
     "ldap_server": "",               # ldap://dc01.company.local or ldaps://...
     "ldap_domain": "",               # COMPANY  (NetBIOS) -> binds as COMPANY\\user

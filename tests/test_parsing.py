@@ -75,7 +75,8 @@ def test_two_receipt_slips_on_one_page():
 
 def test_classify():
     assert docs.classify([box("CUSTOMER", 0, 0), box("TICKET", 0, 0), box("PAYMENT", 0, 0), box("DEPOSIT", 0, 0)]) == "sheet"
-    assert docs.classify([box("DOB: 03/31/1997", 0, 0), box("CLASS: C", 0, 20)]) == "sensitive"
+    assert docs.classify([box("DOB: 03/31/1997", 0, 0), box("CLASS: C", 0, 20)]) == "other"        # no page is locked as an ID any more
+    assert docs.classify([box("TRUCK 42 DRIVER: JUAN", 0, 0), box("HOT MIX ASPHALT 7.7 TONS", 0, 20)]) == "other"
     assert docs.classify([box("Esperanza Homes Payment ACH Entry Memo Posted Today", 0, 0), box("$10,359.53", 900, 0)]) == "bankpost"
 
 def test_grouping_pairs_receipts_in_order_and_falls_back_to_cash():

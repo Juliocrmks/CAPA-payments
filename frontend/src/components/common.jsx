@@ -5,7 +5,6 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ZoomInIcon from "@mui/icons-material/ZoomIn";
 import ZoomOutIcon from "@mui/icons-material/ZoomOut";
-import LockIcon from "@mui/icons-material/Lock";
 import DownloadIcon from "@mui/icons-material/Download";
 import { sheetColor, methodColor, inkOn } from "../theme";
 import { METHODS } from "../api";
@@ -50,12 +49,11 @@ export function Lightbox({ pages, index, onClose, canDownload }) {
         <Typography sx={{ flex: 1 }}>Page {i + 1} of {pages.length} · {kindLabel(p.kind)}</Typography>
         <IconButton aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} sx={{ color: "#fff" }}><ZoomOutIcon /></IconButton>
         <IconButton aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(4, z + 0.25))} sx={{ color: "#fff" }}><ZoomInIcon /></IconButton>
-        {canDownload && !p.sensitive && <Tooltip title="Download this page"><IconButton aria-label="Download this page" component="a" href={withParam(p.image, "download=1")} sx={{ color: "#fff" }}><DownloadIcon /></IconButton></Tooltip>}
+        {canDownload && <Tooltip title="Download this page"><IconButton aria-label="Download this page" component="a" href={withParam(p.image, "download=1")} sx={{ color: "#fff" }}><DownloadIcon /></IconButton></Tooltip>}
         <IconButton aria-label="Close" onClick={onClose} sx={{ color: "#fff" }}><CloseIcon /></IconButton>
       </Stack>
       <Box sx={{ flex: 1, overflow: "auto", display: "flex", justifyContent: "center", alignItems: zoom > 1 ? "flex-start" : "center", p: 2, position: "relative" }}>
-        {p.sensitive ? <SensitiveNote /> :
-          <img src={p.image} alt={kindLabel(p.kind)} style={{ width: zoom > 1 ? `${zoom * 90}%` : "auto", maxWidth: zoom > 1 ? "none" : "94%", maxHeight: zoom > 1 ? "none" : "86vh", background: "#fff", borderRadius: 6 }} />}
+        {<img src={p.image} alt={kindLabel(p.kind)} style={{ width: zoom > 1 ? `${zoom * 90}%` : "auto", maxWidth: zoom > 1 ? "none" : "94%", maxHeight: zoom > 1 ? "none" : "86vh", background: "#fff", borderRadius: 6 }} />}
         {i > 0 && <IconButton aria-label="Previous page" onClick={() => setI(i - 1)} sx={navBtn("left")}><ChevronLeftIcon /></IconButton>}
         {i < pages.length - 1 && <IconButton aria-label="Next page" onClick={() => setI(i + 1)} sx={navBtn("right")}><ChevronRightIcon /></IconButton>}
       </Box>
@@ -64,13 +62,9 @@ export function Lightbox({ pages, index, onClose, canDownload }) {
 }
 const navBtn = (side) => ({ position: "fixed", top: "50%", [side]: 12, bgcolor: "rgba(255,255,255,.15)", color: "#fff", "&:hover": { bgcolor: "rgba(255,255,255,.3)" } });
 
-function SensitiveNote() {
-  return <Stack alignItems="center" spacing={1} sx={{ color: "#fff", mt: 10 }}><LockIcon fontSize="large" />
-    <Typography>ID or card photo. Hidden to protect personal data.</Typography></Stack>;
-}
 
 export const kindLabel = (k) => ({ check: "Check", confirmation: "Payment confirmation", receipt: "Receipt slip", bankpost: "Bank posting",
-  email: "E-mail", sensitive: "ID / card photo", support: "Supporting page", sheet: "Day sheet printout", attachment: "Attachment", other: "Page" }[k] || "Page");
+  email: "E-mail", support: "Supporting page", sheet: "Day sheet printout", attachment: "Attachment", other: "Page" }[k] || "Page");
 
 export function Thumbs({ pages, onOpen, height = 92, max = 6, canDownload = false, onRemove }) {
   if (!pages?.length) return <Box sx={{ height, flexShrink: 0, display: "grid", placeItems: "center", bgcolor: "#f1eeeb", borderRadius: 1, color: "text.secondary", fontSize: 13 }}>No document</Box>;
@@ -82,14 +76,13 @@ export function Thumbs({ pages, onOpen, height = 92, max = 6, canDownload = fals
             <Box component="button" onClick={() => onOpen(i)} aria-label={`Open ${kindLabel(p.kind)}`}
               sx={{ p: 0, border: "1px solid", borderColor: p.kind === "attachment" ? "secondary.light" : "divider", borderRadius: 1, bgcolor: "#fff", cursor: "zoom-in", display: "block",
                 height, minWidth: height * 0.6, maxWidth: height * 2.6, overflow: "hidden", "&:focus-visible": { outline: "2px solid", outlineColor: "secondary.main" } }}>
-              {p.sensitive ? <Box sx={{ height: "100%", width: height * 0.78, display: "grid", placeItems: "center", color: "text.secondary" }}><LockIcon fontSize="small" /></Box>
-                : <img src={p.thumb || p.image} alt="" loading="lazy"     // the tile takes the document's shape: a check is wide, a letter page tall
+              {<img src={p.thumb || p.image} alt="" loading="lazy"     // the tile takes the document's shape: a check is wide, a letter page tall
                     style={{ height: "100%", width: "auto", maxWidth: height * 2.6, display: "block", objectFit: "cover", objectPosition: "top left" }} />}
             </Box>
           </Tooltip>
-          {(canDownload && !p.sensitive) || (onRemove && p.kind === "attachment") ? (
+          {canDownload || (onRemove && p.kind === "attachment") ? (
             <Stack direction="row" spacing={.25} sx={{ position: "absolute", top: 2, right: 2 }}>
-              {canDownload && !p.sensitive && <Tooltip title="Download"><IconButton size="small" component="a" href={withParam(p.image, "download=1")} aria-label={`Download ${kindLabel(p.kind)} ${i + 1}`}
+              {canDownload && <Tooltip title="Download"><IconButton size="small" component="a" href={withParam(p.image, "download=1")} aria-label={`Download ${kindLabel(p.kind)} ${i + 1}`}
                 sx={{ bgcolor: "rgba(255,255,255,.92)", p: .25, "&:hover": { bgcolor: "#fff" } }}><DownloadIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>}
               {onRemove && p.kind === "attachment" && <Tooltip title="Remove attachment"><IconButton size="small" onClick={() => onRemove(p)} aria-label={`Remove attachment ${i + 1}`}
                 sx={{ bgcolor: "rgba(255,255,255,.92)", p: .25, "&:hover": { bgcolor: "#fff" } }}><CloseIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>}
